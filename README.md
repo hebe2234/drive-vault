@@ -15,8 +15,9 @@
 
 ### 📊 回測
 - 資料：Binance 免費 K 線（免 API key）或上傳自己的 CSV（`date,open,high,low,close`）
+- 日期區間：Binance 來源可自訂開始/結束日期（留空＝最近 1000 根）；CSV 用檔案自帶區間
 - 引擎：純前端向量化回測，做多全倉進出，手續費可調
-- 輸出：總報酬、年化 Sharpe、最大回撤、勝率、Profit Factor、權益曲線圖、交易明細
+- 輸出：總報酬、年化 Sharpe、最大回撤、勝率、Profit Factor、權益曲線圖、交易明細（含每筆買賣時間）
 
 ### 📝 Paper Trading
 $100,000 虛擬帳戶，用 Binance 即時市價模擬成交：
