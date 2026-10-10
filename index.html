@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quant Lab｜量化工作台</title>
-<link rel="stylesheet" href="styles.css?v=116">
+<link rel="stylesheet" href="styles.css?v=117">
 </head>
 <body>
 
@@ -69,7 +69,10 @@
           <span style="font-family:monospace">rsi(period)[i]</span>、
           <span style="font-family:monospace">boll(period,mult).up / .dn / .mid[i]</span>。
           回傳 <span style="font-family:monospace">1</span>=買、<span style="font-family:monospace">-1</span>=賣、
-          <span style="font-family:monospace">0</span>=無動作。只能用當下（含）以前的資料，不要偷看未來。</p>
+          <span style="font-family:monospace">0</span>=無動作。想用分級倉位：回傳 <span style="font-family:monospace">0~1</span>
+          的小數當目標權重（例如 <span style="font-family:monospace">0.7</span>=70% 倉位；只要出現過
+          <span style="font-family:monospace">-1/0/1</span> 以外的值就走分級模式，偏離目標 &gt;5% 才調倉）。
+          只能用當下（含）以前的資料，不要偷看未來。</p>
         </div>
         <div class="field" style="width:100%"><label>假說（為什麼這個訊號應該存在）</label>
           <textarea id="sHyp" placeholder="寫下經濟邏輯，寫不出來就不該回測"></textarea></div>
@@ -116,9 +119,9 @@
         <h2>回測結果</h2>
         <div class="metrics" id="bMetrics"></div>
         <canvas class="chart" id="bChart" width="900" height="260"></canvas>
-        <h3>交易明細（近 50 筆）</h3>
+        <h3 id="bTradesTitle">交易明細（近 50 筆）</h3>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>#</th><th>進場</th><th>出場</th><th class="num">進場價</th><th class="num">出場價</th><th class="num">報酬率</th></tr></thead>
+          <thead id="bTradesHead"><tr><th>#</th><th>進場</th><th>出場</th><th class="num">進場價</th><th class="num">出場價</th><th class="num">報酬率</th></tr></thead>
           <tbody id="bTrades"></tbody>
         </table></div>
       </div>
@@ -205,6 +208,6 @@
   </div>
 </div>
 
-<script src="app.js?v=116"></script>
+<script src="app.js?v=117"></script>
 </body>
 </html>
