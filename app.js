@@ -5,6 +5,9 @@
 const $ = id => document.getElementById(id);
 const fmt$ = n => "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtPct = n => (n * 100).toFixed(2) + "%";
+const INTERVAL_MS = { "1d": 86400000, "4h": 14400000, "1h": 3600000 };
+const fmtT = ms => { if (ms == null) return "—"; const d = new Date(ms), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const cls = n => n >= 0 ? "pos" : "neg";
 const todayStr = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -278,7 +281,7 @@ function genSignals(closes, template, p, code) {
 }
 
 /* 回測引擎：做多全倉進出 */
-function runEngine(closes, template, params, feeRate, code) {
+function runEngine(closes, template, params, feeRate, code, times) {
   const fee = feeRate / 100;
   const sig = genSignals(closes, template, params, code);
   let cash = 10000, pos = 0, entryPrice = 0, entryIdx = 0;
@@ -288,7 +291,8 @@ function runEngine(closes, template, params, feeRate, code) {
     if (sig[i] === 1 && pos === 0 && cash > 0) { pos = (cash * (1 - fee)) / px; entryPrice = px; entryIdx = i; cash = 0; }
     else if (sig[i] === -1 && pos > 0) {
       cash = pos * px * (1 - fee);
-      trades.push({ in: entryIdx, out: i, ep: entryPrice, xp: px, ret: px / entryPrice - 1 });
+      trades.push({ in: entryIdx, out: i, ep: entryPrice, xp: px, ret: px / entryPrice - 1,
+        inTime: times ? times[entryIdx] : null, outTime: times ? times[i] : null });
       pos = 0;
     }
     equity.push(cash + pos * px);
@@ -349,20 +353,44 @@ async function testConnection() {
 async function fetchBinance(symbol, interval, limit) {
   const k = await binanceFetch(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
   if (!Array.isArray(k) || !k.length) throw new Error("行情回傳格式異常，可能是交易對不存在");
-  return k.map(x => parseFloat(x[4]));
+  return { closes: k.map(x => parseFloat(x[4])), times: k.map(x => x[0]) };
+}
+/* 自訂日期區間：分頁抓取（每頁最多 1000 根），回傳 {closes, times} */
+async function fetchBinanceRange(symbol, interval, startMs, endMs) {
+  const step = INTERVAL_MS[interval] || 3600000;
+  const hardEnd = endMs || Date.now();
+  const closes = [], times = [];
+  let cur = startMs, guard = 0;
+  while (cur < hardEnd && guard++ < 8) {
+    const k = await binanceFetch(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=1000&startTime=${cur}&endTime=${hardEnd}`);
+    if (!Array.isArray(k) || !k.length) break;
+    for (const x of k) {
+      const t = x[0];
+      if (t < cur) continue;
+      if (t >= hardEnd) break;
+      closes.push(parseFloat(x[4])); times.push(t);
+    }
+    const lastT = k[k.length - 1][0];
+    if (k.length < 1000 || lastT + step >= hardEnd) break;
+    cur = lastT + step;
+  }
+  if (closes.length < 60) throw new Error("該區間資料太少（至少需要 60 根 K 棒），請放寬日期範圍");
+  return { closes, times };
 }
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
-  const closes = [];
+  const closes = [], times = [];
   for (const ln of lines) {
     const cells = ln.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
     const nums = cells.map(Number).filter(v => !isNaN(v));
     if (!nums.length) continue;
     if (/date/i.test(cells[0]) && isNaN(Number(cells[0]))) continue; // header
     closes.push(nums[nums.length - 1]); // 取最後一個數字欄當收盤
+    const dt = Date.parse(cells[0]);
+    times.push(isNaN(dt) ? null : dt); // 第一欄若是日期就留作時間
   }
   if (closes.length < 60) throw new Error("資料太少（至少需要 60 根 K 棒）");
-  return closes;
+  return { closes, times };
 }
 let lastResult = null;
 async function runBacktest() {
@@ -370,22 +398,34 @@ async function runBacktest() {
   if (!s) { alert("請先在策略區建立策略"); return; }
   $("bRun").disabled = true; $("bStatus").textContent = "資料載入中…"; $("bResult").classList.add("hidden");
   try {
-    let closes;
+    let closes, times = null;
     if ($("bSrc").value === "binance") {
       const sym = $("bSymbol").value.trim().toUpperCase() || s.symbol;
-      closes = await fetchBinance(sym, $("bInterval").value, 1000);
+      const iv = $("bInterval").value;
+      const sMs = $("bStart").value ? new Date($("bStart").value + "T00:00:00").getTime() : null;
+      const eMs = $("bEnd").value ? new Date($("bEnd").value + "T23:59:59").getTime() : null;
+      if (sMs && eMs && eMs < sMs) throw new Error("結束日期不可早於開始日期");
+      if (sMs) {
+        const d = await fetchBinanceRange(sym, iv, sMs, eMs);
+        closes = d.closes; times = d.times;
+      } else {
+        const d = await fetchBinance(sym, iv, 1000);
+        closes = d.closes; times = d.times;
+      }
     } else {
       const f = $("bCsv").files[0];
       if (!f) throw new Error("請先選擇 CSV 檔");
-      closes = parseCSV(await f.text());
+      const d = parseCSV(await f.text());
+      closes = d.closes; times = d.times;
     }
-    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "");
+    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "", times);
     lastResult = { r, symbol: $("bSymbol").value.trim().toUpperCase() || s.symbol, name: s.name };
     s.lastBacktest = { date: todayStr(), totalRet: r.totalRet, sharpe: r.sharpe, maxDD: r.maxDD,
                        winRate: r.winRate, nTrades: r.nTrades };
     saveDB(); renderStrategies();
     renderBacktestResult(lastResult);
-    $("bStatus").textContent = `完成：${closes.length} 根 K 棒，${r.nTrades} 筆交易。`;
+    const rangeTxt = (times && times[0] != null) ? `（${fmtT(times[0])}～${fmtT(times[times.length - 1])}）` : "";
+    $("bStatus").textContent = `完成：${closes.length} 根 K 棒${rangeTxt}，${r.nTrades} 筆交易。`;
   } catch (e) { $("bStatus").textContent = "❌ " + e.message; }
   $("bRun").disabled = false;
 }
@@ -404,7 +444,7 @@ function renderBacktestResult({ r, symbol, name }) {
   const tb = $("bTrades"); tb.innerHTML = "";
   r.trades.slice(-50).reverse().forEach((t, i) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.trades.length - i}</td><td>#${t.in}</td><td>#${t.out}</td>
+    tr.innerHTML = `<td>${r.trades.length - i}</td><td title="K 棒 #${t.in}">${fmtT(t.inTime)}</td><td title="K 棒 #${t.out}">${fmtT(t.outTime)}</td>
       <td class="num">${t.ep.toFixed(2)}</td><td class="num">${t.xp.toFixed(2)}</td>
       <td class="num ${cls(t.ret)}">${fmtPct(t.ret)}</td>`;
     tb.appendChild(tr);
