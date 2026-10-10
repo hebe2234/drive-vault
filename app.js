@@ -56,20 +56,45 @@ function saveDB() { localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
 let DB = loadDB(); saveDB();
 
 const STAGE_LABEL = { idea: "💡 點子", backtest: "📊 回測中", paper: "📝 Paper", live: "🚀 實盤", retired: "🗑 淘汰" };
-const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道" };
+const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道", custom: "自訂程式碼" };
 const TPL_PARAMS = {
   ma_cross: [{ k: "fast", label: "快線", def: 10 }, { k: "slow", label: "慢線", def: 30 }],
   rsi_mr: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }],
   bollinger: [{ k: "period", label: "週期", def: 20 }, { k: "mult", label: "倍數", def: 2 }],
+  custom: [],
 };
+const TPL_FORMULA = {
+  ma_cross: p => `SMA(${p.fast}) 由下向上穿越 SMA(${p.slow}) → 買入（全倉）；由上向下跌破 → 賣出（全出）。以當根 K 棒收盤價成交。`,
+  rsi_mr: p => `RSI(${p.period}) < ${p.oversold} → 買入；RSI(${p.period}) > ${p.overbought} → 賣出。賭情緒超賣超買後的均值回歸。`,
+  bollinger: p => `收盤價跌破下軌（布林 ${p.period} 根、${p.mult}σ）→ 買入；漲破上軌 → 賣出。`,
+};
+const DEFAULT_CUSTOM_CODE =
+`// signal(i, closes, p) → 回傳 1=買入, -1=賣出, 0=無動作
+// 可用工具：sma(n,i)、rsi(period)[i]、boll(period,mult).up/.dn/.mid[i]
+function signal(i, closes, p) {
+  const f = sma(p.fast, i), s = sma(p.slow, i);
+  const f0 = sma(p.fast, i - 1), s0 = sma(p.slow, i - 1);
+  if (f == null || s == null || f0 == null || s0 == null) return 0;
+  if (f0 <= s0 && f > s) return 1;   // 快線向上穿越慢線 → 買
+  if (f0 >= s0 && f < s) return -1;  // 快線向下跌破慢線 → 賣
+  return 0;
+}`;
 
 /* ---------- 策略區 ---------- */
 function renderParamInputs() {
   const tpl = $("sTemplate").value, box = $("paramInputs"); box.innerHTML = "";
-  const cur = editingId ? (DB.strategies.find(s => s.id === editingId) || {}).params || {} : {};
+  $("customBox").classList.toggle("hidden", tpl !== "custom");
+  const cur = editingId ? (DB.strategies.find(s => s.id === editingId) || {}) : {};
+  if (tpl === "custom") {
+    $("sParamsJson").value = cur.params ? JSON.stringify(cur.params) : '{"fast": 10, "slow": 30}';
+    if (!editingId || !cur.code) $("sCode").value = cur.code || DEFAULT_CUSTOM_CODE;
+    else $("sCode").value = cur.code;
+    return;
+  }
+  const params = cur.params || {};
   TPL_PARAMS[tpl].forEach(p => {
     const d = document.createElement("div"); d.className = "field";
-    d.innerHTML = `<label>${p.label}</label><input type="number" step="any" data-pk="${p.k}" value="${cur[p.k] != null ? cur[p.k] : p.def}" style="width:100px">`;
+    d.innerHTML = `<label>${p.label}</label><input type="number" step="any" data-pk="${p.k}" value="${params[p.k] != null ? params[p.k] : p.def}" style="width:100px">`;
     box.appendChild(d);
   });
 }
@@ -82,13 +107,25 @@ function readParams() {
 function saveStrategy() {
   const name = $("sName").value.trim();
   if (!name) { alert("請輸入策略名稱"); return; }
+  const tpl = $("sTemplate").value;
+  let params, code = "";
+  if (tpl === "custom") {
+    try { params = JSON.parse($("sParamsJson").value); }
+    catch (e) { alert("參數 JSON 格式錯誤：\n" + e.message); return; }
+    code = $("sCode").value;
+    if (!/function\s+signal\s*\(/.test(code)) { alert("程式碼裡要有 function signal(i, closes, p)"); return; }
+  } else {
+    params = readParams();
+  }
+  const prev = editingId ? (DB.strategies.find(s => s.id === editingId) || {}) : {};
   const obj = {
     id: editingId || ("s" + Date.now()),
     name, market: $("sMarket").value,
     symbol: ($("sSymbol").value.trim() || "BTCUSDT").toUpperCase(),
-    template: $("sTemplate").value, params: readParams(),
+    template: tpl, params, code,
     stage: $("sStage").value, hyp: $("sHyp").value.trim(),
-    created: editingId ? (DB.strategies.find(s => s.id === editingId) || {}).created : todayStr(),
+    created: prev.created || todayStr(),
+    lastBacktest: prev.lastBacktest,
   };
   if (editingId) DB.strategies = DB.strategies.map(s => s.id === editingId ? obj : s);
   else DB.strategies.push(obj);
@@ -118,11 +155,27 @@ function renderStrategies() {
   DB.strategies.forEach(s => {
     const d = document.createElement("div"); d.className = "strat";
     const pstr = Object.entries(s.params || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+    const logicHtml = s.template === "custom"
+      ? `<pre style="background:#0d1320;padding:10px;border-radius:8px;overflow-x:auto;font-size:12px;margin:6px 0">${esc(s.code || "")}</pre>`
+      : `<div style="margin:6px 0">${esc((TPL_FORMULA[s.template] || (() => ""))(s.params || {}))}</div>`;
+    const lb = s.lastBacktest;
+    const lbHtml = lb
+      ? `<div>上次回測（${esc(lb.date)}）：總報酬 <b class="${cls(lb.totalRet)}">${fmtPct(lb.totalRet)}</b> · Sharpe ${Number(lb.sharpe).toFixed(2)} · 最大回撤 ${fmtPct(lb.maxDD)} · 勝率 ${fmtPct(lb.winRate)} · ${lb.nTrades} 筆交易</div>`
+      : `<div>尚未回測 — 按「去回測」跑一次，成績會記在這裡。</div>`;
     d.innerHTML = `
       <span class="stage stage-${s.stage}">${STAGE_LABEL[s.stage] || s.stage}</span>
       <h3>${esc(s.name)}</h3>
       <div class="meta">${s.market === "crypto" ? "Crypto" : "美股"} · ${esc(s.symbol)} · ${TPL_LABEL[s.template]}（${esc(pstr)}）· ${esc(s.created || "")}</div>
       <div class="hyp">${esc(s.hyp || "（未寫假說）")}</div>
+      <details style="margin:8px 0">
+        <summary style="cursor:pointer;font-size:13px;color:var(--acc)">查看策略詳情</summary>
+        <div style="margin-top:8px;font-size:13px;line-height:1.7">
+          <div class="meta">訊號邏輯</div>${logicHtml}
+          <div class="meta" style="margin-top:6px">參數</div>
+          <div style="font-family:monospace;font-size:12px">${esc(JSON.stringify(s.params))}</div>
+          <div class="meta" style="margin-top:6px">回測成績</div>${lbHtml}
+        </div>
+      </details>
       <div class="actions">
         <button class="btn sm ghost" onclick="editStrategy('${s.id}')">編輯</button>
         <button class="btn sm" onclick="quickBacktest('${s.id}')">去回測 →</button>
@@ -177,7 +230,7 @@ function bollArr(closes, period, mult) {
 }
 
 /* 訊號：1=買, -1=賣, 0=無（訊號用當根收盤產生、當根收盤成交） */
-function genSignals(closes, template, p) {
+function genSignals(closes, template, p, code) {
   const n = closes.length, sig = new Array(n).fill(0);
   if (template === "ma_cross") {
     const { fast, slow } = p;
@@ -202,14 +255,32 @@ function genSignals(closes, template, p) {
       if (closes[i] < dn[i]) sig[i] = 1;
       else if (closes[i] > up[i]) sig[i] = -1;
     }
+  } else if (template === "custom") {
+    const rsiCache = {}, bollCache = {};
+    const h = {
+      sma: (nn, i) => sma(closes, nn, i),
+      rsi: (per) => rsiCache[per] || (rsiCache[per] = rsiArr(closes, per)),
+      boll: (per, mult) => { const k = per + "_" + mult; return bollCache[k] || (bollCache[k] = bollArr(closes, per, mult)); },
+    };
+    let fn;
+    try {
+      fn = new Function("i", "closes", "p", "sma", "rsi", "boll",
+        (code || "") + "\n;return (typeof signal==='function') ? signal(i,closes,p) : 0;");
+    } catch (e) { throw new Error("自訂程式碼編譯失敗：" + e.message); }
+    for (let i = 0; i < n; i++) {
+      let v = 0;
+      try { v = fn(i, closes, p, h.sma, h.rsi, h.boll); }
+      catch (e) { throw new Error(`自訂程式碼在第 ${i} 根 K 棒出錯：` + e.message); }
+      sig[i] = v === 1 ? 1 : v === -1 ? -1 : 0;
+    }
   }
   return sig;
 }
 
 /* 回測引擎：做多全倉進出 */
-function runEngine(closes, template, params, feeRate) {
+function runEngine(closes, template, params, feeRate, code) {
   const fee = feeRate / 100;
-  const sig = genSignals(closes, template, params);
+  const sig = genSignals(closes, template, params, code);
   let cash = 10000, pos = 0, entryPrice = 0, entryIdx = 0;
   const equity = [], trades = [];
   for (let i = 0; i < closes.length; i++) {
@@ -277,8 +348,11 @@ async function runBacktest() {
       if (!f) throw new Error("請先選擇 CSV 檔");
       closes = parseCSV(await f.text());
     }
-    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0);
+    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "");
     lastResult = { r, symbol: $("bSymbol").value.trim().toUpperCase() || s.symbol, name: s.name };
+    s.lastBacktest = { date: todayStr(), totalRet: r.totalRet, sharpe: r.sharpe, maxDD: r.maxDD,
+                       winRate: r.winRate, nTrades: r.nTrades };
+    saveDB(); renderStrategies();
     renderBacktestResult(lastResult);
     $("bStatus").textContent = `完成：${closes.length} 根 K 棒，${r.nTrades} 筆交易。`;
   } catch (e) { $("bStatus").textContent = "❌ " + e.message; }
@@ -427,7 +501,7 @@ async function runnerTick() {
   try {
     const klines = await (await fetch(`https://api.binance.com/api/v3/klines?symbol=${s.symbol}&interval=1m&limit=120`)).json();
     const closes = klines.map(k => parseFloat(k[4]));
-    const sig = genSignals(closes, s.template, s.params);
+    const sig = genSignals(closes, s.template, s.params, s.code || "");
     const last = sig[sig.length - 2]; // 用已收盤的上一根，避免未收盤跳動
     const px = closes[closes.length - 1];
     const pos = DB.paper.positions[s.symbol];
