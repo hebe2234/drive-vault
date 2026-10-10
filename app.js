@@ -313,11 +313,27 @@ function runEngine(closes, template, params, feeRate, code) {
 
 /* ---------- 回測 UI ---------- */
 function toggleCsv() { $("csvRow").classList.toggle("hidden", $("bSrc").value !== "csv"); }
+/* 行情來源：data-api.binance.vision 是幣安官方公開行情站（無地區限制，優先）；
+   api.binance.com 在美國會被擋（HTTP 451）；api.binance.us 是美國站備援 */
+const BINANCE_HOSTS = [
+  "https://data-api.binance.vision",
+  "https://api.binance.com",
+  "https://api.binance.us",
+];
+async function binanceFetch(path) {
+  let lastErr = null;
+  for (const h of BINANCE_HOSTS) {
+    try {
+      const r = await fetch(h + path);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw new Error("行情來源都連不上（" + (lastErr && lastErr.message) + "），請檢查網路或改用上傳 CSV");
+}
 async function fetchBinance(symbol, interval, limit) {
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("Binance API 錯誤 " + r.status);
-  const k = await r.json();
+  const k = await binanceFetch(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+  if (!Array.isArray(k) || !k.length) throw new Error("行情回傳格式異常，可能是交易對不存在");
   return k.map(x => parseFloat(x[4]));
 }
 function parseCSV(text) {
@@ -400,9 +416,10 @@ const PAPER_FEE = 0.001;
 let priceCache = {}, priceTimer = null, runnerTimer = null, runnerState = null;
 
 async function binancePrice(symbol) {
-  const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
-  if (!r.ok) throw new Error("報價失敗 " + r.status);
-  return parseFloat((await r.json()).price);
+  const j = await binanceFetch(`/api/v3/ticker/price?symbol=${symbol}`);
+  const px = parseFloat(j.price);
+  if (!px) throw new Error("報價異常，可能是交易對不存在");
+  return px;
 }
 function paperLog(msg) {
   DB.paper.log.unshift(`[${new Date().toLocaleString()}] ${msg}`);
@@ -499,7 +516,7 @@ async function runnerTick() {
   const s = DB.strategies.find(x => x.id === runnerState.stratId);
   if (!s) { stopPaperRunner(); return; }
   try {
-    const klines = await (await fetch(`https://api.binance.com/api/v3/klines?symbol=${s.symbol}&interval=1m&limit=120`)).json();
+    const klines = await binanceFetch(`/api/v3/klines?symbol=${s.symbol}&interval=1m&limit=120`);
     const closes = klines.map(k => parseFloat(k[4]));
     const sig = genSignals(closes, s.template, s.params, s.code || "");
     const last = sig[sig.length - 2]; // 用已收盤的上一根，避免未收盤跳動
