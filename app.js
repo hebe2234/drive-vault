@@ -320,16 +320,31 @@ const BINANCE_HOSTS = [
   "https://api.binance.com",
   "https://api.binance.us",
 ];
+let lastNetDiag = [];
 async function binanceFetch(path) {
-  let lastErr = null;
+  lastNetDiag = [];
   for (const h of BINANCE_HOSTS) {
     try {
       const r = await fetch(h + path);
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) { lastNetDiag.push(h + " → HTTP " + r.status); continue; }
       return await r.json();
-    } catch (e) { lastErr = e; }
+    } catch (e) { lastNetDiag.push(h + " → " + (e.message || "連線失敗")); }
   }
-  throw new Error("行情來源都連不上（" + (lastErr && lastErr.message) + "），請檢查網路或改用上傳 CSV");
+  throw new Error("三個行情來源都連不上。常見原因：Brave Shields 或擋廣告外掛擋了幣安網域、公司/學校網路限制。\n" + lastNetDiag.join("\n"));
+}
+/* 診斷按鈕用：逐一測試每個行情站 */
+async function testConnection() {
+  const el = $("bStatus");
+  el.textContent = "測試中…";
+  const rows = [];
+  for (const h of BINANCE_HOSTS) {
+    try {
+      const t0 = Date.now();
+      const r = await fetch(h + "/api/v3/ticker/price?symbol=BTCUSDT");
+      rows.push(h + (r.ok ? ` ✅ ${(Date.now() - t0)}ms` : ` ❌ HTTP ${r.status}`));
+    } catch (e) { rows.push(h + ` ❌ ${e.message || "連線失敗"}`); }
+  }
+  el.innerHTML = "連線測試結果：<br>" + rows.map(esc).join("<br>");
 }
 async function fetchBinance(symbol, interval, limit) {
   const k = await binanceFetch(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
