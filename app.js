@@ -350,6 +350,10 @@ function runEngine(closes, template, params, feeRate, code, times, vix) {
   const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1));
   let peak = -1e18, maxDD = 0;
   equity.forEach(e => { peak = Math.max(peak, e); maxDD = Math.min(maxDD, e / peak - 1); });
+  /* 大盤基準：同一標的、同一區間的買入持有 */
+  const benchEquity = closes.map(c => c / closes[0] * 10000);
+  let bpeak = -1e18, bmaxDD = 0;
+  benchEquity.forEach(e => { bpeak = Math.max(bpeak, e); bmaxDD = Math.min(bmaxDD, e / bpeak - 1); });
   const wins = trades.filter(t => t.ret > 0);
   const grossW = wins.reduce((a, t) => a + t.ret, 0), grossL = -trades.filter(t => t.ret <= 0).reduce((a, t) => a + t.ret, 0);
   return {
@@ -359,6 +363,7 @@ function runEngine(closes, template, params, feeRate, code, times, vix) {
     maxDD, winRate: trades.length ? wins.length / trades.length : 0,
     nTrades: trades.length,
     profitFactor: grossL === 0 ? (grossW > 0 ? Infinity : 0) : grossW / grossL,
+    bench: { equity: benchEquity, totalRet: benchEquity[benchEquity.length - 1] / benchEquity[0] - 1, maxDD: bmaxDD },
   };
 }
 
@@ -484,21 +489,24 @@ async function runBacktest() {
 function renderBacktestResult({ r, symbol, name, times }) {
   $("bResult").classList.remove("hidden");
   const pf = r.profitFactor === Infinity ? "∞" : r.profitFactor.toFixed(2);
-  const cagr = (() => {
-    if (!times || times[0] == null || r.equity.length < 2) return null;
-    const yrs = (times[times.length - 1] - times[0]) / (365.25 * 86400000);
-    return yrs > 0 ? Math.pow(r.equity[r.equity.length - 1] / r.equity[0], 1 / yrs) - 1 : null;
-  })();
+  const yrs = (times && times[0] != null && r.equity.length >= 2)
+    ? (times[times.length - 1] - times[0]) / (365.25 * 86400000) : 0;
+  const cagrOf = eq => yrs > 0 ? Math.pow(eq[eq.length - 1] / eq[0], 1 / yrs) - 1 : null;
+  const cagr = cagrOf(r.equity);
+  const bcagr = r.bench ? cagrOf(r.bench.equity) : null;
+  const excess = (cagr == null || bcagr == null) ? null : cagr - bcagr;
   $("bMetrics").innerHTML = `
     <div class="metric"><div class="k">策略</div><div class="v" style="font-size:14px">${esc(name)}</div></div>
     <div class="metric"><div class="k">總報酬</div><div class="v ${cls(r.totalRet)}">${fmtPct(r.totalRet)}</div></div>
     <div class="metric"><div class="k">年化報酬</div><div class="v ${cagr == null ? "" : cls(cagr)}">${cagr == null ? "—" : fmtPct(cagr)}</div></div>
+    <div class="metric"><div class="k">大盤年化</div><div class="v ${bcagr == null ? "" : cls(bcagr)}">${bcagr == null ? "—" : fmtPct(bcagr)}</div></div>
+    <div class="metric"><div class="k">超額年化</div><div class="v ${excess == null ? "" : cls(excess)}">${excess == null ? "—" : fmtPct(excess)}</div></div>
     <div class="metric"><div class="k">Sharpe（年化）</div><div class="v ${cls(r.sharpe)}">${r.sharpe.toFixed(2)}</div></div>
     <div class="metric"><div class="k">最大回撤</div><div class="v neg">${fmtPct(r.maxDD)}</div></div>
     <div class="metric"><div class="k">勝率</div><div class="v">${fmtPct(r.winRate)}</div></div>
     <div class="metric"><div class="k">交易次數</div><div class="v">${r.nTrades}</div></div>
     <div class="metric"><div class="k">Profit Factor</div><div class="v">${pf}</div></div>`;
-  drawChart($("bChart"), r.equity, r.trades.map(t => t.out));
+  drawChart($("bChart"), r.equity, r.trades.map(t => t.out), r.bench ? r.bench.equity : null);
   const tb = $("bTrades"); tb.innerHTML = "";
   r.trades.slice(-50).reverse().forEach((t, i) => {
     const tr = document.createElement("tr");
@@ -508,18 +516,26 @@ function renderBacktestResult({ r, symbol, name, times }) {
     tb.appendChild(tr);
   });
 }
-function drawChart(cv, equity, exits) {
+function drawChart(cv, equity, exits, bench) {
   const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
-  const min = Math.min(...equity), max = Math.max(...equity), rg = (max - min) || 1;
+  const all = (bench && bench.length === equity.length) ? equity.concat(bench) : equity;
+  const min = Math.min(...all), max = Math.max(...all), rg = (max - min) || 1;
   const X = i => (i / (equity.length - 1)) * (W - 16) + 8;
   const Y = v => H - 14 - ((v - min) / rg) * (H - 40);
   ctx.strokeStyle = "#2c3852"; ctx.beginPath(); ctx.moveTo(8, Y(10000)); ctx.lineTo(W - 8, Y(10000)); ctx.stroke();
+  if (bench && bench.length === equity.length) {
+    ctx.strokeStyle = "#6b7688"; ctx.setLineDash([5, 4]); ctx.beginPath();
+    bench.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
+    ctx.stroke(); ctx.setLineDash([]);
+  }
   ctx.strokeStyle = "#4f8cff"; ctx.lineWidth = 2; ctx.beginPath();
   equity.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
   ctx.stroke(); ctx.lineWidth = 1;
   ctx.fillStyle = "#8b96ad"; ctx.font = "11px sans-serif";
   ctx.fillText("max " + fmt$(max), 10, 14); ctx.fillText("min " + fmt$(min), 10, H - 4);
+  ctx.fillStyle = "#4f8cff"; ctx.fillText("— 策略", W - 108, 14);
+  if (bench && bench.length === equity.length) { ctx.fillStyle = "#6b7688"; ctx.fillText("- - 大盤", W - 108, 28); }
   ctx.fillStyle = "#ff7a7a";
   (exits || []).forEach(i => { ctx.beginPath(); ctx.arc(X(i), Y(equity[i]), 3, 0, 7); ctx.fill(); });
 }
