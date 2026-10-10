@@ -97,6 +97,8 @@
             <option value="1d">日線</option><option value="4h">4 小時</option><option value="1h">1 小時</option>
           </select></div>
           <div class="field"><label>手續費率 %</label><input type="number" id="bFee" value="0.1" step="0.05" style="width:90px"></div>
+          <div class="field"><label>開始日期（留空＝自動）</label><input type="date" id="bStart" style="width:150px"></div>
+          <div class="field"><label>結束日期（留空＝到今天）</label><input type="date" id="bEnd" style="width:150px"></div>
         </div>
         <div class="row hidden" id="csvRow">
           <div class="field" style="min-width:280px"><label>CSV 檔（欄位：date,open,high,low,close；或只有 close 欄）</label>
@@ -106,7 +108,7 @@
           <button class="btn" id="bRun" onclick="runBacktest()">▶ 執行回測</button>
           <button class="btn ghost" onclick="testConnection()">🔍 測試行情連線</button>
         </div>
-        <p class="mut">假設：訊號以當根 K 棒收盤價成交、做多全倉進出。回測只看歷史，不保證未來。</p>
+        <p class="mut">假設：訊號以當根 K 棒收盤價成交、做多全倉進出。Binance 來源可自訂日期區間（留空則取最近 1000 根）；CSV 用檔案自帶的區間。回測只看歷史，不保證未來。</p>
         <div id="bStatus" class="mut"></div>
       </div>
       <div class="card hidden" id="bResult">
