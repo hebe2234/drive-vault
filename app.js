@@ -59,17 +59,19 @@ function saveDB() { localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
 let DB = loadDB(); saveDB();
 
 const STAGE_LABEL = { idea: "💡 點子", backtest: "📊 回測中", paper: "📝 Paper", live: "🚀 實盤", retired: "🗑 淘汰" };
-const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道", custom: "自訂程式碼" };
+const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道", vix_fear: "VIX 恐懼貪婪", custom: "自訂程式碼" };
 const TPL_PARAMS = {
   ma_cross: [{ k: "fast", label: "快線", def: 10 }, { k: "slow", label: "慢線", def: 30 }],
   rsi_mr: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }],
   bollinger: [{ k: "period", label: "週期", def: 20 }, { k: "mult", label: "倍數", def: 2 }],
+  vix_fear: [{ k: "lookback", label: "分位回看（天）", def: 252 }, { k: "buyPct", label: "買入分位（恐懼）", def: 0.9 }, { k: "sellPct", label: "賣出分位（安逸）", def: 0.2 }],
   custom: [],
 };
 const TPL_FORMULA = {
   ma_cross: p => `SMA(${p.fast}) 由下向上穿越 SMA(${p.slow}) → 買入（全倉）；由上向下跌破 → 賣出（全出）。以當根 K 棒收盤價成交。`,
   rsi_mr: p => `RSI(${p.period}) < ${p.oversold} → 買入；RSI(${p.period}) > ${p.overbought} → 賣出。賭情緒超賣超買後的均值回歸。`,
   bollinger: p => `收盤價跌破下軌（布林 ${p.period} 根、${p.mult}σ）→ 買入；漲破上軌 → 賣出。`,
+  vix_fear: p => `VIX 在過去 ${p.lookback} 天的分位數 ≥ ${p.buyPct}（極度恐懼）→ 買入；≤ ${p.sellPct}（極度安逸）→ 賣出。別人恐懼我貪婪，賭 VIX 均值回歸。VIX 資料來自 FRED，每日自動更新。`,
 };
 const DEFAULT_CUSTOM_CODE =
 `// signal(i, closes, p) → 回傳 1=買入, -1=賣出, 0=無動作
@@ -233,7 +235,41 @@ function bollArr(closes, period, mult) {
 }
 
 /* 訊號：1=買, -1=賣, 0=無（訊號用當根收盤產生、當根收盤成交） */
-function genSignals(closes, template, p, code) {
+/* ---------- VIX 資料（FRED VIXCLS，每日；vix.csv 與網站同源，無 CORS 問題） ---------- */
+let _vixCache = null;
+async function loadVixData() {
+  if (_vixCache) return _vixCache;
+  const r = await fetch("vix.csv");
+  if (!r.ok) throw new Error("VIX 資料檔載入失敗（vix.csv）");
+  const lines = (await r.text()).trim().split(/\r?\n/);
+  const dates = [], closes = [];
+  for (const ln of lines) {
+    const c = ln.split(",").map(x => x.trim());
+    if (/date/i.test(c[0])) continue;
+    const t = Date.parse(c[0] + "T00:00:00Z"), v = parseFloat(c[1]);
+    if (!isNaN(t) && !isNaN(v)) { dates.push(t); closes.push(v); }
+  }
+  if (!closes.length) throw new Error("VIX 資料檔是空的");
+  return (_vixCache = { dates, closes });
+}
+/* 把 VIX 對齊到每根 K 棒：日線用當天收盤；分鐘線用前一交易日收盤（避免前視偏差） */
+function alignVix(barTimes, interval, vd) {
+  const m = new Map();
+  vd.dates.forEach((d, i) => m.set(d, vd.closes[i]));
+  const sorted = [...m.keys()].sort((a, b) => a - b);
+  const out = new Array(barTimes.length).fill(null);
+  let vi = 0, last = null;
+  for (let i = 0; i < barTimes.length; i++) {
+    const d = new Date(barTimes[i]);
+    const day = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const target = interval === "1d" ? day : day - 86400000;
+    while (vi < sorted.length && sorted[vi] <= target) { last = m.get(sorted[vi]); vi++; }
+    out[i] = last;
+  }
+  return out;
+}
+
+function genSignals(closes, template, p, code, vix) {
   const n = closes.length, sig = new Array(n).fill(0);
   if (template === "ma_cross") {
     const { fast, slow } = p;
@@ -258,6 +294,17 @@ function genSignals(closes, template, p, code) {
       if (closes[i] < dn[i]) sig[i] = 1;
       else if (closes[i] > up[i]) sig[i] = -1;
     }
+  } else if (template === "vix_fear") {
+    const lb = p.lookback || 252, bp = p.buyPct != null ? p.buyPct : 0.9, sp = p.sellPct != null ? p.sellPct : 0.2;
+    for (let i = 0; i < n; i++) {
+      const v = vix ? vix[i] : null;
+      if (v == null || i < lb) continue;
+      let cnt = 0;
+      for (let k = i - lb + 1; k <= i; k++) { const w = vix[k]; if (w != null && w <= v) cnt++; }
+      const pct = cnt / lb;
+      if (pct >= bp) sig[i] = 1;        // 極度恐懼 → 貪婪買入
+      else if (pct <= sp) sig[i] = -1;  // 極度安逸 → 恐懼賣出
+    }
   } else if (template === "custom") {
     const rsiCache = {}, bollCache = {};
     const h = {
@@ -267,12 +314,12 @@ function genSignals(closes, template, p, code) {
     };
     let fn;
     try {
-      fn = new Function("i", "closes", "p", "sma", "rsi", "boll",
-        (code || "") + "\n;return (typeof signal==='function') ? signal(i,closes,p) : 0;");
+      fn = new Function("i", "closes", "p", "sma", "rsi", "boll", "vix",
+        (code || "") + "\n;return (typeof signal==='function') ? signal(i,closes,p,sma,rsi,boll,vix) : 0;");
     } catch (e) { throw new Error("自訂程式碼編譯失敗：" + e.message); }
     for (let i = 0; i < n; i++) {
       let v = 0;
-      try { v = fn(i, closes, p, h.sma, h.rsi, h.boll); }
+      try { v = fn(i, closes, p, h.sma, h.rsi, h.boll, vix); }
       catch (e) { throw new Error(`自訂程式碼在第 ${i} 根 K 棒出錯：` + e.message); }
       sig[i] = v === 1 ? 1 : v === -1 ? -1 : 0;
     }
@@ -281,9 +328,9 @@ function genSignals(closes, template, p, code) {
 }
 
 /* 回測引擎：做多全倉進出 */
-function runEngine(closes, template, params, feeRate, code, times) {
+function runEngine(closes, template, params, feeRate, code, times, vix) {
   const fee = feeRate / 100;
-  const sig = genSignals(closes, template, params, code);
+  const sig = genSignals(closes, template, params, code, vix);
   let cash = 10000, pos = 0, entryPrice = 0, entryIdx = 0;
   const equity = [], trades = [];
   for (let i = 0; i < closes.length; i++) {
@@ -418,7 +465,12 @@ async function runBacktest() {
       const d = parseCSV(await f.text());
       closes = d.closes; times = d.times;
     }
-    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "", times);
+    let vix = null;
+    if (s.template === "vix_fear" || (s.template === "custom" && /vix/i.test(s.code || ""))) {
+      const vd = await loadVixData();
+      vix = alignVix(times, $("bSrc").value === "binance" ? $("bInterval").value : "1d", vd);
+    }
+    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "", times, vix);
     lastResult = { r, symbol: $("bSymbol").value.trim().toUpperCase() || s.symbol, name: s.name, times };
     s.lastBacktest = { date: todayStr(), totalRet: r.totalRet, sharpe: r.sharpe, maxDD: r.maxDD,
                        winRate: r.winRate, nTrades: r.nTrades };
@@ -579,7 +631,12 @@ async function runnerTick() {
   try {
     const klines = await binanceFetch(`/api/v3/klines?symbol=${s.symbol}&interval=1m&limit=120`);
     const closes = klines.map(k => parseFloat(k[4]));
-    const sig = genSignals(closes, s.template, s.params, s.code || "");
+    let vix = null;
+    if (s.template === "vix_fear" || (s.template === "custom" && /vix/i.test(s.code || ""))) {
+      try { vix = alignVix(klines.map(k => k[0]), "1m", await loadVixData()); }
+      catch (e) { paperLog("[自動] VIX 資料載入失敗，跳過本次"); return; }
+    }
+    const sig = genSignals(closes, s.template, s.params, s.code || "", vix);
     const last = sig[sig.length - 2]; // 用已收盤的上一根，避免未收盤跳動
     const px = closes[closes.length - 1];
     const pos = DB.paper.positions[s.symbol];
