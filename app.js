@@ -419,7 +419,7 @@ async function runBacktest() {
       closes = d.closes; times = d.times;
     }
     const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "", times);
-    lastResult = { r, symbol: $("bSymbol").value.trim().toUpperCase() || s.symbol, name: s.name };
+    lastResult = { r, symbol: $("bSymbol").value.trim().toUpperCase() || s.symbol, name: s.name, times };
     s.lastBacktest = { date: todayStr(), totalRet: r.totalRet, sharpe: r.sharpe, maxDD: r.maxDD,
                        winRate: r.winRate, nTrades: r.nTrades };
     saveDB(); renderStrategies();
@@ -429,12 +429,18 @@ async function runBacktest() {
   } catch (e) { $("bStatus").textContent = "❌ " + e.message; }
   $("bRun").disabled = false;
 }
-function renderBacktestResult({ r, symbol, name }) {
+function renderBacktestResult({ r, symbol, name, times }) {
   $("bResult").classList.remove("hidden");
   const pf = r.profitFactor === Infinity ? "∞" : r.profitFactor.toFixed(2);
+  const cagr = (() => {
+    if (!times || times[0] == null || r.equity.length < 2) return null;
+    const yrs = (times[times.length - 1] - times[0]) / (365.25 * 86400000);
+    return yrs > 0 ? Math.pow(r.equity[r.equity.length - 1] / r.equity[0], 1 / yrs) - 1 : null;
+  })();
   $("bMetrics").innerHTML = `
     <div class="metric"><div class="k">策略</div><div class="v" style="font-size:14px">${esc(name)}</div></div>
     <div class="metric"><div class="k">總報酬</div><div class="v ${cls(r.totalRet)}">${fmtPct(r.totalRet)}</div></div>
+    <div class="metric"><div class="k">年化報酬</div><div class="v ${cagr == null ? "" : cls(cagr)}">${cagr == null ? "—" : fmtPct(cagr)}</div></div>
     <div class="metric"><div class="k">Sharpe（年化）</div><div class="v ${cls(r.sharpe)}">${r.sharpe.toFixed(2)}</div></div>
     <div class="metric"><div class="k">最大回撤</div><div class="v neg">${fmtPct(r.maxDD)}</div></div>
     <div class="metric"><div class="k">勝率</div><div class="v">${fmtPct(r.winRate)}</div></div>
