@@ -503,6 +503,7 @@ function renderBacktestResult({ r, symbol, name, times }) {
     <div class="metric"><div class="k">超額年化</div><div class="v ${excess == null ? "" : cls(excess)}">${excess == null ? "—" : fmtPct(excess)}</div></div>
     <div class="metric"><div class="k">Sharpe（年化）</div><div class="v ${cls(r.sharpe)}">${r.sharpe.toFixed(2)}</div></div>
     <div class="metric"><div class="k">最大回撤</div><div class="v neg">${fmtPct(r.maxDD)}</div></div>
+    <div class="metric"><div class="k">大盤最大回撤</div><div class="v neg">${r.bench ? fmtPct(r.bench.maxDD) : "—"}</div></div>
     <div class="metric"><div class="k">勝率</div><div class="v">${fmtPct(r.winRate)}</div></div>
     <div class="metric"><div class="k">交易次數</div><div class="v">${r.nTrades}</div></div>
     <div class="metric"><div class="k">Profit Factor</div><div class="v">${pf}</div></div>`;
