@@ -3,106 +3,189 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>🔐 私人小站</title>
-<style>
-  :root { --bg:#0f1420; --card:#1a2233; --txt:#e8edf5; --mut:#8b96ad; --acc:#4f8cff; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--txt);
-         font-family:-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
-         min-height:100vh; }
-  .center { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
-  .card { background:var(--card); border-radius:14px; padding:28px; width:100%; max-width:380px;
-          box-shadow:0 4px 24px rgba(0,0,0,.35); text-align:center; }
-  .card h1 { font-size:20px; margin:0 0 6px; }
-  .card p { color:var(--mut); font-size:13px; margin:0 0 16px; }
-  input[type=password] { width:100%; background:#0d1320; color:var(--txt); border:1px solid #2c3852;
-      border-radius:8px; padding:11px 12px; font-size:15px; text-align:center; letter-spacing:1px; }
-  input:focus { outline:none; border-color:var(--acc); }
-  .btn { display:block; width:100%; background:var(--acc); color:#fff; border:0; border-radius:8px;
-         padding:11px; font-size:15px; cursor:pointer; margin-top:12px; }
-  .btn:hover { filter:brightness(1.12); }
-  #gateMsg { font-size:13px; color:#ff8f8f; min-height:20px; margin-top:10px; }
-  .hidden { display:none !important; }
-  /* ---- 內容區 ---- */
-  .wrap { max-width:720px; margin:0 auto; padding:32px 16px 64px; }
-  .hero { text-align:center; margin-bottom:28px; }
-  .hero h1 { font-size:26px; margin:0 0 8px; }
-  .hero p { color:var(--mut); font-size:14px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
-  .tile { background:var(--card); border-radius:12px; padding:20px; }
-  .tile h2 { font-size:16px; margin:0 0 8px; }
-  .tile p { color:var(--mut); font-size:13px; line-height:1.7; margin:0; }
-  .foot { text-align:center; color:var(--mut); font-size:12px; margin-top:40px; }
-  .foot button { background:none; border:1px solid #2c3852; color:var(--mut); border-radius:6px;
-                 padding:6px 12px; font-size:12px; cursor:pointer; margin-top:8px; }
-</style>
+<title>Quant Lab｜量化工作台</title>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
 <!-- 密碼門 -->
 <div id="gate" class="center">
-  <div class="card">
-    <h1>🔐 私人小站</h1>
+  <div class="gate-card">
+    <h1>🔐 Quant Lab</h1>
     <p>請輸入密碼進入</p>
-    <input type="password" id="pw" placeholder="密碼" autocomplete="off"
+    <input type="password" id="pw" placeholder="密碼" autocomplete="off" style="width:100%;text-align:center;letter-spacing:1px"
            onkeydown="if(event.key==='Enter')unlock()">
-    <button class="btn" onclick="unlock()">進入</button>
+    <button class="btn" style="width:100%;margin-top:12px" onclick="unlock()">進入</button>
     <div id="gateMsg"></div>
   </div>
 </div>
 
-<!-- 內容 -->
-<div id="content" class="hidden">
+<!-- 主程式 -->
+<div id="app" class="hidden">
+  <div class="topbar">
+    <span class="logo">📈 Quant Lab</span>
+    <button class="tabbtn active" data-tab="strat" onclick="showTab('strat')">🧪 策略區</button>
+    <button class="tabbtn" data-tab="backtest" onclick="showTab('backtest')">📊 回測</button>
+    <button class="tabbtn" data-tab="paper" onclick="showTab('paper')">📝 Paper Trading</button>
+    <button class="tabbtn" data-tab="live" onclick="showTab('live')">🚀 正式上線</button>
+    <span class="spacer"></span>
+    <button class="tabbtn" onclick="lock()">🔒 鎖定</button>
+  </div>
+
   <div class="wrap">
-    <div class="hero">
-      <h1>👋 歡迎回來</h1>
-      <p>這是你的私人小站起始頁。告訴我你想放什麼，我幫你換上真正的內容。</p>
+
+    <!-- ===== 策略區 ===== -->
+    <div id="tab-strat">
+      <div class="card">
+        <h2>新增 / 編輯策略</h2>
+        <input type="hidden" id="sId">
+        <div class="row">
+          <div class="field" style="flex:2;min-width:200px"><label>策略名稱</label><input type="text" id="sName" placeholder="例如：BTC 均線交叉"></div>
+          <div class="field"><label>市場</label><select id="sMarket"><option value="crypto">Crypto</option><option value="stock">美股</option></select></div>
+          <div class="field"><label>交易對 / 代碼</label><input type="text" id="sSymbol" placeholder="BTCUSDT 或 AAPL" style="width:150px"></div>
+          <div class="field"><label>訊號模板</label><select id="sTemplate" onchange="renderParamInputs()">
+            <option value="ma_cross">均線交叉</option>
+            <option value="rsi_mr">RSI 均值回歸</option>
+            <option value="bollinger">布林通道</option>
+          </select></div>
+          <div class="field"><label>階段</label><select id="sStage">
+            <option value="idea">💡 點子</option><option value="backtest">📊 回測中</option>
+            <option value="paper">📝 Paper</option><option value="live">🚀 實盤</option>
+            <option value="retired">🗑 淘汰</option>
+          </select></div>
+        </div>
+        <div class="row" id="paramInputs"></div>
+        <div class="field" style="width:100%"><label>假說（為什麼這個訊號應該存在）</label>
+          <textarea id="sHyp" placeholder="寫下經濟邏輯，寫不出來就不該回測"></textarea></div>
+        <div class="row">
+          <button class="btn" onclick="saveStrategy()">💾 儲存策略</button>
+          <button class="btn ghost" onclick="resetStrategyForm()">清空</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>策略庫 <span class="mut" id="stratCount"></span></h2>
+        <div class="strat-grid" id="stratGrid"></div>
+      </div>
     </div>
-    <div class="grid">
-      <div class="tile"><h2>📌 區塊一</h2><p>預留位置。可以放公告、連結、筆記入口。</p></div>
-      <div class="tile"><h2>📊 區塊二</h2><p>預留位置。可以放數據、圖表、追蹤表。</p></div>
-      <div class="tile"><h2>📝 區塊三</h2><p>預留位置。可以放文章、想法、待辦。</p></div>
+
+    <!-- ===== 回測 ===== -->
+    <div id="tab-backtest" class="hidden">
+      <div class="card">
+        <h2>回測設定</h2>
+        <div class="row">
+          <div class="field"><label>策略</label><select id="bStrat"></select></div>
+          <div class="field"><label>資料來源</label><select id="bSrc" onchange="toggleCsv()">
+            <option value="binance">Binance（免費，需網路）</option><option value="csv">上傳 CSV</option>
+          </select></div>
+          <div class="field"><label>交易對</label><input type="text" id="bSymbol" value="BTCUSDT" style="width:130px"></div>
+          <div class="field"><label>K 線週期</label><select id="bInterval">
+            <option value="1d">日線</option><option value="4h">4 小時</option><option value="1h">1 小時</option>
+          </select></div>
+          <div class="field"><label>手續費率 %</label><input type="number" id="bFee" value="0.1" step="0.05" style="width:90px"></div>
+        </div>
+        <div class="row hidden" id="csvRow">
+          <div class="field" style="min-width:280px"><label>CSV 檔（欄位：date,open,high,low,close；或只有 close 欄）</label>
+            <input type="file" id="bCsv" accept=".csv"></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="bRun" onclick="runBacktest()">▶ 執行回測</button>
+        </div>
+        <p class="mut">假設：訊號以當根 K 棒收盤價成交、做多全倉進出。回測只看歷史，不保證未來。</p>
+        <div id="bStatus" class="mut"></div>
+      </div>
+      <div class="card hidden" id="bResult">
+        <h2>回測結果</h2>
+        <div class="metrics" id="bMetrics"></div>
+        <canvas class="chart" id="bChart" width="900" height="260"></canvas>
+        <h3>交易明細（近 50 筆）</h3>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>#</th><th>進場</th><th>出場</th><th class="num">進場價</th><th class="num">出場價</th><th class="num">報酬率</th></tr></thead>
+          <tbody id="bTrades"></tbody>
+        </table></div>
+      </div>
     </div>
-    <div class="foot">
-      簡易密碼門（擋路人等級）· 同一瀏覽器 session 內免重複輸入
-      <br><button onclick="lock()">鎖定</button>
+
+    <!-- ===== Paper ===== -->
+    <div id="tab-paper" class="hidden">
+      <div class="warn">虛擬資金 paper trading：用即時市價模擬成交，不花真錢。資料存在這台瀏覽器（localStorage）。</div>
+      <div class="card">
+        <h2>虛擬帳戶 <span class="mut">（<span id="pEquityLive"><span class="status-dot dot-off"></span>未連線</span>）</span></h2>
+        <div class="metrics">
+          <div class="metric"><div class="k">總權益</div><div class="v" id="pEquity">—</div></div>
+          <div class="metric"><div class="k">現金</div><div class="v" id="pCash">—</div></div>
+          <div class="metric"><div class="k">持倉市值</div><div class="v" id="pMktVal">—</div></div>
+          <div class="metric"><div class="k">總報酬</div><div class="v" id="pRet">—</div></div>
+        </div>
+        <div class="row">
+          <button class="btn ghost sm" onclick="resetPaper()">↺ 重置虛擬帳戶（$100,000）</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>手動下單（虛擬）</h2>
+        <div class="row">
+          <div class="field"><label>交易對</label><input type="text" id="pSymbol" value="BTCUSDT" style="width:130px"></div>
+          <div class="field"><label>數量</label><input type="number" id="pQty" value="0.01" step="any" style="width:110px"></div>
+          <div class="field"><label>即時價</label><div id="pPrice" style="padding:9px 0;font-weight:700">—</div></div>
+          <div class="field"><label>&nbsp;</label><div>
+            <button class="btn green" onclick="paperTrade('buy')">買入</button>
+            <button class="btn danger" onclick="paperTrade('sell')">賣出</button>
+          </div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>策略自動跑（虛擬）</h2>
+        <div class="row">
+          <div class="field"><label>策略</label><select id="pStrat"></select></div>
+          <div class="field"><label>檢查頻率</label><select id="pFreq">
+            <option value="60">每 1 分鐘</option><option value="300">每 5 分鐘</option><option value="900">每 15 分鐘</option>
+          </select></div>
+          <div class="field"><label>單次投入權益比 %</label><input type="number" id="pAlloc" value="10" style="width:90px"></div>
+          <div class="field"><label>&nbsp;</label><div>
+            <button class="btn green" id="pStartBtn" onclick="startPaperRunner()">▶ 啟動</button>
+            <button class="btn danger hidden" id="pStopBtn" onclick="stopPaperRunner()">⏹ 停止</button>
+          </div></div>
+        </div>
+        <p class="mut" id="pRunnerStatus">尚未啟動。用最新已收盤 K 棒算訊號：買訊號且無倉位→買入；賣訊號且有倉位→全出。</p>
+      </div>
+      <div class="card">
+        <h2>持倉</h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>交易對</th><th class="num">數量</th><th class="num">均價</th><th class="num">現價</th><th class="num">未實現損益</th><th></th></tr></thead>
+          <tbody id="pPositions"><tr><td colspan="6" class="mut">無持倉</td></tr></tbody>
+        </table></div>
+        <h3>成交紀錄（近 20 筆）</h3>
+        <div class="log" id="pLog"><div class="mut">尚無紀錄</div></div>
+      </div>
     </div>
+
+    <!-- ===== 正式上線 ===== -->
+    <div id="tab-live" class="hidden">
+      <div class="warn">🚨 這裡是實盤區。v1 的「上線」以前三個階段驗證過的策略為準；真實券商串接需要後端保管 API key，本版尚未內建，下方是串接指引。</div>
+      <div class="card">
+        <h2>實盤候選（階段 = 🚀 實盤的策略）</h2>
+        <div id="liveList" class="mut">尚無進入實盤階段的策略。先在策略區把階段切到「實盤」。</div>
+      </div>
+      <div class="card">
+        <h2>風控</h2>
+        <div class="row">
+          <button class="btn danger" onclick="killAll()">⛔ 緊急全部平倉（虛擬倉位）</button>
+        </div>
+        <p class="mut">一鍵把 paper/虛擬持倉全部市價出清。真實帳戶的 kill switch 需在券商端設定。</p>
+      </div>
+      <div class="card">
+        <h2>串接真實券商（指引）</h2>
+        <div class="mut">
+          <p>1. <b>Alpaca</b>（美股/ crypto，免佣、有免費 paper 帳戶）：到 alpaca.markets 申請，拿 API Key + Secret。Paper 先用 <span style="font-family:monospace">paper-api.alpaca.markets</span> 練習。</p>
+          <p>2. <b>Key 保管</b>：API Secret 絕對不要寫進前端程式碼或 public repo。正確做法是架一個最小後端（例如 Cloudflare Worker / 一台 VPS 上的 Python），瀏覽器只跟自己的後端講話，後端再拿 key 去下單。</p>
+          <p>3. <b>先 paper 後 live</b>：同一個策略，先在 Alpaca paper 跑 1–3 個月，績效貼近回測才切 live；live 初期只給 5–10% 資金。</p>
+          <p>4. 需要我幫你架後端串接時再說 — 那是 v2 的工作。</p>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
-<script>
-/* 密碼的 SHA-256 hash。想換密碼：把新密碼的 sha256 貼到這裡即可。 */
-const PASS_HASH = "1129b21a2ed9ea752cdfb776cc6fc7f8855b7345f27fc25cad9e3c5fbf14026f";
-
-async function sha256Hex(s) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
-}
-function showContent() {
-  document.getElementById("gate").classList.add("hidden");
-  document.getElementById("content").classList.remove("hidden");
-}
-async function unlock() {
-  const v = document.getElementById("pw").value;
-  const msg = document.getElementById("gateMsg");
-  if (!v) { msg.textContent = "請輸入密碼"; return; }
-  msg.textContent = "驗證中…";
-  const h = await sha256Hex(v);
-  if (h === PASS_HASH) {
-    sessionStorage.setItem("pv_auth", "1");
-    document.getElementById("pw").value = "";
-    msg.textContent = "";
-    showContent();
-  } else {
-    msg.textContent = "密碼錯誤，再試一次";
-  }
-}
-function lock() {
-  sessionStorage.removeItem("pv_auth");
-  document.getElementById("content").classList.add("hidden");
-  document.getElementById("gate").classList.remove("hidden");
-}
-if (sessionStorage.getItem("pv_auth") === "1") showContent();
-</script>
+<script src="app.js"></script>
 </body>
 </html>
