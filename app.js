@@ -72,7 +72,7 @@ const TPL_FORMULA = {
   rsi_mr: p => `RSI(${p.period}) < ${p.oversold} → 買入；RSI(${p.period}) > ${p.overbought} → 賣出。賭情緒超賣超買後的均值回歸。`,
   bollinger: p => `收盤價跌破下軌（布林 ${p.period} 根、${p.mult}σ）→ 買入；漲破上軌 → 賣出。`,
   vix_fear: p => { const wMax = p.wMax != null ? p.wMax : 1, wMin = p.wMin != null ? p.wMin : 0;
-    return `VIX 過去 ${p.lookback || 252} 天分位數 → 目標倉位（${wMin}~${wMax} 線性對應，越恐懼倉位越重）。分級倉位、每日再平衡（偏離 >5% 才調倉）。`; },
+    return `VIX 過去 ${p.lookback || 252} 天分位數 → 目標倉位（${wMin}~${wMax} 線性對應，越恐懼倉位越重）。分級倉位、每日再平衡（偏離 >10% 才調倉）。`; },
 };
 const DEFAULT_CUSTOM_CODE =
 `// signal(i, closes, p) → 回傳 1=買入, -1=賣出, 0=無動作
@@ -342,7 +342,7 @@ function genSignals(closes, template, p, code, vix) {
 
 /* 回測引擎：分級倉位 — 每根 K 棒朝目標權重（0~1）再平衡
    舊模板的 1/-1 視為 100%/0%，行為與舊版全倉進出完全一致 */
-const REBAL_TOL = 0.05; // 權重偏離超過 5% 才調倉，避免頻繁小額進出
+const REBAL_TOL = 0.10; // 權重偏離超過 10% 才調倉，避免頻繁小額進出手續費大出血
 function runEngine(closes, template, params, feeRate, code, times, vix) {
   const fee = feeRate / 100;
   const { mode, sig, targets } = genSignals(closes, template, params, code, vix);
