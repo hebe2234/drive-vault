@@ -1,0 +1,492 @@
+/* ============ Quant Lab v1 ============ */
+"use strict";
+
+/* ---------- 小工具 ---------- */
+const $ = id => document.getElementById(id);
+const fmt$ = n => "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const fmtPct = n => (n * 100).toFixed(2) + "%";
+const cls = n => n >= 0 ? "pos" : "neg";
+const todayStr = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------- 密碼門 ---------- */
+const PASS_HASH = "1129b21a2ed9ea752cdfb776cc6fc7f8855b7345f27fc25cad9e3c5fbf14026f"; // 0806449
+async function sha256Hex(s) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function showApp() { $("gate").classList.add("hidden"); $("app").classList.remove("hidden"); }
+async function unlock() {
+  const v = $("pw").value, msg = $("gateMsg");
+  if (!v) { msg.textContent = "請輸入密碼"; return; }
+  msg.textContent = "驗證中…";
+  if ((await sha256Hex(v)) === PASS_HASH) {
+    sessionStorage.setItem("ql_auth", "1"); $("pw").value = ""; msg.textContent = ""; showApp();
+  } else msg.textContent = "密碼錯誤，再試一次";
+}
+function lock() {
+  sessionStorage.removeItem("ql_auth");
+  $("app").classList.add("hidden"); $("gate").classList.remove("hidden");
+}
+function showTab(name) {
+  document.querySelectorAll(".tabbtn[data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  ["strat", "backtest", "paper", "live"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== name));
+  if (name === "paper") refreshPaper();
+  if (name === "live") renderLive();
+  if (name === "backtest") refreshBacktestStratSelect();
+}
+
+/* ---------- 資料存取 ---------- */
+const LS_KEY = "quantlab_v1";
+function seedDB() {
+  return {
+    strategies: [
+      { id: "s1", name: "BTC 均線交叉", market: "crypto", symbol: "BTCUSDT", template: "ma_cross",
+        params: { fast: 10, slow: 30 }, stage: "backtest", created: todayStr(),
+        hyp: "趨勢動能：短均線站上長均線代表買盤動能轉強，順勢持有；跌破則出場。假設趨勢在 crypto 日線級別有延續性。" },
+      { id: "s2", name: "ETH RSI 均值回歸", market: "crypto", symbol: "ETHUSDT", template: "rsi_mr",
+        params: { period: 14, oversold: 30, overbought: 70 }, stage: "idea", created: todayStr(),
+        hyp: "情緒超賣超買後的均值回歸：散戶恐慌殺低後價格傾向反彈，RSI<30 買、>70 賣。" },
+    ],
+    paper: { cash: 100000, initial: 100000, positions: {}, log: [] },
+  };
+}
+function loadDB() { try { const d = JSON.parse(localStorage.getItem(LS_KEY)); return d && d.strategies ? d : seedDB(); } catch (e) { return seedDB(); } }
+function saveDB() { localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
+let DB = loadDB(); saveDB();
+
+const STAGE_LABEL = { idea: "💡 點子", backtest: "📊 回測中", paper: "📝 Paper", live: "🚀 實盤", retired: "🗑 淘汰" };
+const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道" };
+const TPL_PARAMS = {
+  ma_cross: [{ k: "fast", label: "快線", def: 10 }, { k: "slow", label: "慢線", def: 30 }],
+  rsi_mr: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }],
+  bollinger: [{ k: "period", label: "週期", def: 20 }, { k: "mult", label: "倍數", def: 2 }],
+};
+
+/* ---------- 策略區 ---------- */
+function renderParamInputs() {
+  const tpl = $("sTemplate").value, box = $("paramInputs"); box.innerHTML = "";
+  const cur = editingId ? (DB.strategies.find(s => s.id === editingId) || {}).params || {} : {};
+  TPL_PARAMS[tpl].forEach(p => {
+    const d = document.createElement("div"); d.className = "field";
+    d.innerHTML = `<label>${p.label}</label><input type="number" step="any" data-pk="${p.k}" value="${cur[p.k] != null ? cur[p.k] : p.def}" style="width:100px">`;
+    box.appendChild(d);
+  });
+}
+let editingId = null;
+function readParams() {
+  const o = {};
+  document.querySelectorAll("#paramInputs input[data-pk]").forEach(i => o[i.dataset.pk] = parseFloat(i.value));
+  return o;
+}
+function saveStrategy() {
+  const name = $("sName").value.trim();
+  if (!name) { alert("請輸入策略名稱"); return; }
+  const obj = {
+    id: editingId || ("s" + Date.now()),
+    name, market: $("sMarket").value,
+    symbol: ($("sSymbol").value.trim() || "BTCUSDT").toUpperCase(),
+    template: $("sTemplate").value, params: readParams(),
+    stage: $("sStage").value, hyp: $("sHyp").value.trim(),
+    created: editingId ? (DB.strategies.find(s => s.id === editingId) || {}).created : todayStr(),
+  };
+  if (editingId) DB.strategies = DB.strategies.map(s => s.id === editingId ? obj : s);
+  else DB.strategies.push(obj);
+  saveDB(); resetStrategyForm(); renderStrategies(); refreshPaperStratSelect();
+}
+function editStrategy(id) {
+  const s = DB.strategies.find(x => x.id === id); if (!s) return;
+  editingId = id;
+  $("sId").value = id; $("sName").value = s.name; $("sMarket").value = s.market;
+  $("sSymbol").value = s.symbol; $("sTemplate").value = s.template; $("sStage").value = s.stage;
+  $("sHyp").value = s.hyp || "";
+  renderParamInputs();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function delStrategy(id) {
+  if (!confirm("確定刪除這個策略？")) return;
+  DB.strategies = DB.strategies.filter(s => s.id !== id);
+  saveDB(); renderStrategies(); refreshPaperStratSelect();
+}
+function resetStrategyForm() {
+  editingId = null; $("sId").value = ""; $("sName").value = ""; $("sSymbol").value = "";
+  $("sHyp").value = ""; $("sStage").value = "idea"; $("sTemplate").value = "ma_cross"; renderParamInputs();
+}
+function renderStrategies() {
+  const g = $("stratGrid"); g.innerHTML = "";
+  $("stratCount").textContent = `（共 ${DB.strategies.length} 個）`;
+  DB.strategies.forEach(s => {
+    const d = document.createElement("div"); d.className = "strat";
+    const pstr = Object.entries(s.params || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+    d.innerHTML = `
+      <span class="stage stage-${s.stage}">${STAGE_LABEL[s.stage] || s.stage}</span>
+      <h3>${esc(s.name)}</h3>
+      <div class="meta">${s.market === "crypto" ? "Crypto" : "美股"} · ${esc(s.symbol)} · ${TPL_LABEL[s.template]}（${esc(pstr)}）· ${esc(s.created || "")}</div>
+      <div class="hyp">${esc(s.hyp || "（未寫假說）")}</div>
+      <div class="actions">
+        <button class="btn sm ghost" onclick="editStrategy('${s.id}')">編輯</button>
+        <button class="btn sm" onclick="quickBacktest('${s.id}')">去回測 →</button>
+        <button class="btn sm ghost" onclick="delStrategy('${s.id}')">刪除</button>
+      </div>`;
+    g.appendChild(d);
+  });
+  if (!DB.strategies.length) g.innerHTML = '<p class="mut">還沒有策略，從上面新增第一個吧。</p>';
+}
+function quickBacktest(id) { showTab("backtest"); refreshBacktestStratSelect(); $("bStrat").value = id; syncBacktestSymbol(); }
+function refreshBacktestStratSelect() {
+  const sel = $("bStrat"), cur = sel.value; sel.innerHTML = "";
+  DB.strategies.forEach(s => { const o = document.createElement("option"); o.value = s.id; o.textContent = `${s.name}（${s.symbol}）`; sel.appendChild(o); });
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  syncBacktestSymbol();
+}
+function syncBacktestSymbol() {
+  const s = DB.strategies.find(x => x.id === $("bStrat").value);
+  if (s) $("bSymbol").value = s.symbol;
+}
+
+/* ---------- 技術指標（只用收盤價，不偷看未來） ---------- */
+function sma(arr, n, i) {
+  if (i < n - 1) return null;
+  let s = 0; for (let j = i - n + 1; j <= i; j++) s += arr[j];
+  return s / n;
+}
+function rsiArr(closes, period) {
+  const out = new Array(closes.length).fill(null);
+  if (closes.length < period + 1) return out;
+  let g = 0, l = 0;
+  for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; if (d > 0) g += d; else l -= d; }
+  g /= period; l /= period;
+  out[period] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    g = (g * (period - 1) + Math.max(d, 0)) / period;
+    l = (l * (period - 1) + Math.max(-d, 0)) / period;
+    out[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+  }
+  return out;
+}
+function bollArr(closes, period, mult) {
+  const up = new Array(closes.length).fill(null), dn = new Array(closes.length).fill(null), mid = new Array(closes.length).fill(null);
+  for (let i = 0; i < closes.length; i++) {
+    const m = sma(closes, period, i); if (m == null) continue;
+    let v = 0; for (let j = i - period + 1; j <= i; j++) v += (closes[j] - m) ** 2;
+    const sd = Math.sqrt(v / period);
+    mid[i] = m; up[i] = m + mult * sd; dn[i] = m - mult * sd;
+  }
+  return { up, dn, mid };
+}
+
+/* 訊號：1=買, -1=賣, 0=無（訊號用當根收盤產生、當根收盤成交） */
+function genSignals(closes, template, p) {
+  const n = closes.length, sig = new Array(n).fill(0);
+  if (template === "ma_cross") {
+    const { fast, slow } = p;
+    for (let i = 1; i < n; i++) {
+      const f0 = sma(closes, fast, i - 1), f1 = sma(closes, fast, i);
+      const s0 = sma(closes, slow, i - 1), s1 = sma(closes, slow, i);
+      if (f0 == null || s0 == null || f1 == null || s1 == null) continue;
+      if (f0 <= s0 && f1 > s1) sig[i] = 1;
+      else if (f0 >= s0 && f1 < s1) sig[i] = -1;
+    }
+  } else if (template === "rsi_mr") {
+    const r = rsiArr(closes, p.period);
+    for (let i = 0; i < n; i++) {
+      if (r[i] == null) continue;
+      if (r[i] < p.oversold) sig[i] = 1;
+      else if (r[i] > p.overbought) sig[i] = -1;
+    }
+  } else if (template === "bollinger") {
+    const { up, dn } = bollArr(closes, p.period, p.mult);
+    for (let i = 0; i < n; i++) {
+      if (up[i] == null) continue;
+      if (closes[i] < dn[i]) sig[i] = 1;
+      else if (closes[i] > up[i]) sig[i] = -1;
+    }
+  }
+  return sig;
+}
+
+/* 回測引擎：做多全倉進出 */
+function runEngine(closes, template, params, feeRate) {
+  const fee = feeRate / 100;
+  const sig = genSignals(closes, template, params);
+  let cash = 10000, pos = 0, entryPrice = 0, entryIdx = 0;
+  const equity = [], trades = [];
+  for (let i = 0; i < closes.length; i++) {
+    const px = closes[i];
+    if (sig[i] === 1 && pos === 0 && cash > 0) { pos = (cash * (1 - fee)) / px; entryPrice = px; entryIdx = i; cash = 0; }
+    else if (sig[i] === -1 && pos > 0) {
+      cash = pos * px * (1 - fee);
+      trades.push({ in: entryIdx, out: i, ep: entryPrice, xp: px, ret: px / entryPrice - 1 });
+      pos = 0;
+    }
+    equity.push(cash + pos * px);
+  }
+  const rets = [];
+  for (let i = 1; i < equity.length; i++) rets.push(equity[i] / equity[i - 1] - 1);
+  const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
+  const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1));
+  let peak = -1e18, maxDD = 0;
+  equity.forEach(e => { peak = Math.max(peak, e); maxDD = Math.min(maxDD, e / peak - 1); });
+  const wins = trades.filter(t => t.ret > 0);
+  const grossW = wins.reduce((a, t) => a + t.ret, 0), grossL = -trades.filter(t => t.ret <= 0).reduce((a, t) => a + t.ret, 0);
+  return {
+    equity, trades, sig,
+    totalRet: equity[equity.length - 1] / equity[0] - 1,
+    sharpe: sd === 0 ? 0 : (mean / sd) * Math.sqrt(365),
+    maxDD, winRate: trades.length ? wins.length / trades.length : 0,
+    nTrades: trades.length,
+    profitFactor: grossL === 0 ? (grossW > 0 ? Infinity : 0) : grossW / grossL,
+  };
+}
+
+/* ---------- 回測 UI ---------- */
+function toggleCsv() { $("csvRow").classList.toggle("hidden", $("bSrc").value !== "csv"); }
+async function fetchBinance(symbol, interval, limit) {
+  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("Binance API 錯誤 " + r.status);
+  const k = await r.json();
+  return k.map(x => parseFloat(x[4]));
+}
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const closes = [];
+  for (const ln of lines) {
+    const cells = ln.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+    const nums = cells.map(Number).filter(v => !isNaN(v));
+    if (!nums.length) continue;
+    if (/date/i.test(cells[0]) && isNaN(Number(cells[0]))) continue; // header
+    closes.push(nums[nums.length - 1]); // 取最後一個數字欄當收盤
+  }
+  if (closes.length < 60) throw new Error("資料太少（至少需要 60 根 K 棒）");
+  return closes;
+}
+let lastResult = null;
+async function runBacktest() {
+  const s = DB.strategies.find(x => x.id === $("bStrat").value);
+  if (!s) { alert("請先在策略區建立策略"); return; }
+  $("bRun").disabled = true; $("bStatus").textContent = "資料載入中…"; $("bResult").classList.add("hidden");
+  try {
+    let closes;
+    if ($("bSrc").value === "binance") {
+      const sym = $("bSymbol").value.trim().toUpperCase() || s.symbol;
+      closes = await fetchBinance(sym, $("bInterval").value, 1000);
+    } else {
+      const f = $("bCsv").files[0];
+      if (!f) throw new Error("請先選擇 CSV 檔");
+      closes = parseCSV(await f.text());
+    }
+    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0);
+    lastResult = { r, symbol: $("bSymbol").value.trim().toUpperCase() || s.symbol, name: s.name };
+    renderBacktestResult(lastResult);
+    $("bStatus").textContent = `完成：${closes.length} 根 K 棒，${r.nTrades} 筆交易。`;
+  } catch (e) { $("bStatus").textContent = "❌ " + e.message; }
+  $("bRun").disabled = false;
+}
+function renderBacktestResult({ r, symbol, name }) {
+  $("bResult").classList.remove("hidden");
+  const pf = r.profitFactor === Infinity ? "∞" : r.profitFactor.toFixed(2);
+  $("bMetrics").innerHTML = `
+    <div class="metric"><div class="k">策略</div><div class="v" style="font-size:14px">${esc(name)}</div></div>
+    <div class="metric"><div class="k">總報酬</div><div class="v ${cls(r.totalRet)}">${fmtPct(r.totalRet)}</div></div>
+    <div class="metric"><div class="k">Sharpe（年化）</div><div class="v ${cls(r.sharpe)}">${r.sharpe.toFixed(2)}</div></div>
+    <div class="metric"><div class="k">最大回撤</div><div class="v neg">${fmtPct(r.maxDD)}</div></div>
+    <div class="metric"><div class="k">勝率</div><div class="v">${fmtPct(r.winRate)}</div></div>
+    <div class="metric"><div class="k">交易次數</div><div class="v">${r.nTrades}</div></div>
+    <div class="metric"><div class="k">Profit Factor</div><div class="v">${pf}</div></div>`;
+  drawChart($("bChart"), r.equity, r.trades.map(t => t.out));
+  const tb = $("bTrades"); tb.innerHTML = "";
+  r.trades.slice(-50).reverse().forEach((t, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${r.trades.length - i}</td><td>#${t.in}</td><td>#${t.out}</td>
+      <td class="num">${t.ep.toFixed(2)}</td><td class="num">${t.xp.toFixed(2)}</td>
+      <td class="num ${cls(t.ret)}">${fmtPct(t.ret)}</td>`;
+    tb.appendChild(tr);
+  });
+}
+function drawChart(cv, equity, exits) {
+  const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const min = Math.min(...equity), max = Math.max(...equity), rg = (max - min) || 1;
+  const X = i => (i / (equity.length - 1)) * (W - 16) + 8;
+  const Y = v => H - 14 - ((v - min) / rg) * (H - 40);
+  ctx.strokeStyle = "#2c3852"; ctx.beginPath(); ctx.moveTo(8, Y(10000)); ctx.lineTo(W - 8, Y(10000)); ctx.stroke();
+  ctx.strokeStyle = "#4f8cff"; ctx.lineWidth = 2; ctx.beginPath();
+  equity.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
+  ctx.stroke(); ctx.lineWidth = 1;
+  ctx.fillStyle = "#8b96ad"; ctx.font = "11px sans-serif";
+  ctx.fillText("max " + fmt$(max), 10, 14); ctx.fillText("min " + fmt$(min), 10, H - 4);
+  ctx.fillStyle = "#ff7a7a";
+  (exits || []).forEach(i => { ctx.beginPath(); ctx.arc(X(i), Y(equity[i]), 3, 0, 7); ctx.fill(); });
+}
+
+/* ---------- Paper Trading（虛擬） ---------- */
+const PAPER_FEE = 0.001;
+let priceCache = {}, priceTimer = null, runnerTimer = null, runnerState = null;
+
+async function binancePrice(symbol) {
+  const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
+  if (!r.ok) throw new Error("報價失敗 " + r.status);
+  return parseFloat((await r.json()).price);
+}
+function paperLog(msg) {
+  DB.paper.log.unshift(`[${new Date().toLocaleString()}] ${msg}`);
+  DB.paper.log = DB.paper.log.slice(0, 100); saveDB(); renderPaperLog();
+}
+function renderPaperLog() {
+  const el = $("pLog");
+  el.innerHTML = DB.paper.log.length ? DB.paper.log.map(x => `<div>${esc(x)}</div>`).join("") : '<div class="mut">尚無紀錄</div>';
+}
+function paperEquity(prices) {
+  let mv = 0;
+  for (const [sym, p] of Object.entries(DB.paper.positions)) mv += p.qty * (prices[sym] || p.avg);
+  return { equity: DB.paper.cash + mv, mv };
+}
+async function refreshPaper() {
+  refreshPaperStratSelect();
+  const syms = new Set(Object.keys(DB.paper.positions));
+  const ms = $("pSymbol").value.trim().toUpperCase(); if (ms) syms.add(ms);
+  const prices = {};
+  let ok = false;
+  for (const s of syms) {
+    try { prices[s] = await binancePrice(s); priceCache[s] = prices[s]; ok = true; }
+    catch (e) { if (priceCache[s]) prices[s] = priceCache[s]; }
+  }
+  $("pEquityLive").innerHTML = ok ? '<span class="status-dot dot-on"></span>連線中' : '<span class="status-dot dot-off"></span>連線失敗（用快取價）';
+  if (ms && prices[ms]) $("pPrice").textContent = fmt$(prices[ms]);
+  const { equity, mv } = paperEquity(prices);
+  $("pEquity").textContent = fmt$(equity);
+  $("pCash").textContent = fmt$(DB.paper.cash);
+  $("pMktVal").textContent = fmt$(mv);
+  const ret = equity / DB.paper.initial - 1;
+  $("pRet").innerHTML = `<span class="${cls(ret)}">${fmtPct(ret)}</span>`;
+  const tb = $("pPositions"); tb.innerHTML = "";
+  for (const [sym, p] of Object.entries(DB.paper.positions)) {
+    const last = prices[sym] || p.avg, upnl = (last - p.avg) * p.qty;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(sym)}</td><td class="num">${p.qty}</td><td class="num">${fmt$(p.avg)}</td>
+      <td class="num">${fmt$(last)}</td><td class="num ${cls(upnl)}">${fmt$(upnl)}</td>
+      <td><button class="btn sm danger" onclick="paperFlatten('${esc(sym)}')">平倉</button></td>`;
+    tb.appendChild(tr);
+  }
+  if (!Object.keys(DB.paper.positions).length) tb.innerHTML = '<tr><td colspan="6" class="mut">無持倉</td></tr>';
+  renderPaperLog();
+}
+async function paperTrade(side) {
+  const sym = $("pSymbol").value.trim().toUpperCase();
+  const qty = parseFloat($("pQty").value);
+  if (!sym || !(qty > 0)) { alert("請輸入交易對與數量"); return; }
+  try {
+    const px = await binancePrice(sym); priceCache[sym] = px;
+    const P = DB.paper;
+    if (side === "buy") {
+      const cost = qty * px * (1 + PAPER_FEE);
+      if (cost > P.cash) { alert("虛擬現金不足"); return; }
+      const cur = P.positions[sym] || { qty: 0, avg: 0 };
+      cur.avg = (cur.avg * cur.qty + qty * px) / (cur.qty + qty); cur.qty += qty;
+      P.positions[sym] = cur; P.cash -= cost;
+      paperLog(`買入 ${qty} ${sym} @ ${fmt$(px)}`);
+    } else {
+      const cur = P.positions[sym];
+      if (!cur || cur.qty < qty) { alert("持倉不足"); return; }
+      cur.qty -= qty; P.cash += qty * px * (1 - PAPER_FEE);
+      if (cur.qty < 1e-9) delete P.positions[sym];
+      paperLog(`賣出 ${qty} ${sym} @ ${fmt$(px)}`);
+    }
+    saveDB(); refreshPaper();
+  } catch (e) { alert("下單失敗：" + e.message); }
+}
+async function paperFlatten(sym) {
+  try {
+    const px = await binancePrice(sym);
+    const cur = DB.paper.positions[sym]; if (!cur) return;
+    DB.paper.cash += cur.qty * px * (1 - PAPER_FEE);
+    paperLog(`平倉 ${cur.qty} ${sym} @ ${fmt$(px)}`);
+    delete DB.paper.positions[sym]; saveDB(); refreshPaper();
+  } catch (e) { alert("平倉失敗：" + e.message); }
+}
+function resetPaper() {
+  if (!confirm("重置虛擬帳戶？持倉與紀錄會清空。")) return;
+  stopPaperRunner();
+  DB.paper = { cash: 100000, initial: 100000, positions: {}, log: [] };
+  saveDB(); refreshPaper();
+}
+function refreshPaperStratSelect() {
+  const sel = $("pStrat"); if (!sel) return;
+  const cur = sel.value; sel.innerHTML = "";
+  DB.strategies.filter(s => s.stage !== "retired").forEach(s => {
+    const o = document.createElement("option"); o.value = s.id; o.textContent = `${s.name}（${s.symbol}）`; sel.appendChild(o);
+  });
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+async function runnerTick() {
+  if (!runnerState) return;
+  const s = DB.strategies.find(x => x.id === runnerState.stratId);
+  if (!s) { stopPaperRunner(); return; }
+  try {
+    const klines = await (await fetch(`https://api.binance.com/api/v3/klines?symbol=${s.symbol}&interval=1m&limit=120`)).json();
+    const closes = klines.map(k => parseFloat(k[4]));
+    const sig = genSignals(closes, s.template, s.params);
+    const last = sig[sig.length - 2]; // 用已收盤的上一根，避免未收盤跳動
+    const px = closes[closes.length - 1];
+    const pos = DB.paper.positions[s.symbol];
+    const { equity } = paperEquity({ [s.symbol]: px });
+    if (last === 1 && !pos) {
+      const budget = equity * (runnerState.alloc / 100), qty = (budget * (1 - PAPER_FEE)) / px;
+      if (budget <= DB.paper.cash && qty > 0) {
+        DB.paper.positions[s.symbol] = { qty, avg: px }; DB.paper.cash -= budget;
+        paperLog(`[自動] ${s.name} 買訊號 → 買入 ${qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
+      } else paperLog(`[自動] ${s.name} 買訊號，但現金不足`);
+    } else if (last === -1 && pos) {
+      DB.paper.cash += pos.qty * px * (1 - PAPER_FEE);
+      paperLog(`[自動] ${s.name} 賣訊號 → 平倉 ${pos.qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
+      delete DB.paper.positions[s.symbol];
+    }
+    saveDB(); refreshPaper();
+    $("pRunnerStatus").textContent = `運行中：${s.name} @ ${s.symbol}，上次檢查 ${new Date().toLocaleTimeString()}，最新訊號=${last === 1 ? "買入" : last === -1 ? "賣出" : "無"}`;
+  } catch (e) { $("pRunnerStatus").textContent = "自動執行出錯：" + e.message + "（會繼續重試）"; }
+}
+function startPaperRunner() {
+  const id = $("pStrat").value;
+  if (!id) { alert("請先在策略區建立策略"); return; }
+  stopPaperRunner();
+  runnerState = { stratId: id, alloc: parseFloat($("pAlloc").value) || 10 };
+  const ms = parseInt($("pFreq").value, 10) * 1000;
+  runnerTick(); runnerTimer = setInterval(runnerTick, ms);
+  $("pStartBtn").classList.add("hidden"); $("pStopBtn").classList.remove("hidden");
+  paperLog(`啟動自動 paper：${DB.strategies.find(s => s.id === id).name}`);
+}
+function stopPaperRunner() {
+  if (runnerTimer) clearInterval(runnerTimer);
+  runnerTimer = null; runnerState = null;
+  const a = $("pStartBtn"), b = $("pStopBtn");
+  if (a) a.classList.remove("hidden"); if (b) b.classList.add("hidden");
+  const st = $("pRunnerStatus"); if (st) st.textContent = "已停止。";
+}
+
+/* ---------- 正式上線 ---------- */
+function renderLive() {
+  const list = DB.strategies.filter(s => s.stage === "live");
+  const el = $("liveList");
+  if (!list.length) { el.innerHTML = "尚無進入實盤階段的策略。先在策略區把階段切到「🚀 實盤」。"; return; }
+  el.innerHTML = list.map(s => {
+    const pstr = Object.entries(s.params || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+    return `<div class="strat" style="margin-bottom:10px"><h3>${esc(s.name)}</h3>
+      <div class="meta">${esc(s.symbol)} · ${TPL_LABEL[s.template]}（${esc(pstr)}）</div>
+      <div class="hyp">${esc(s.hyp || "")}</div></div>`;
+  }).join("");
+}
+function killAll() {
+  const syms = Object.keys(DB.paper.positions);
+  if (!syms.length) { alert("目前沒有虛擬持倉"); return; }
+  if (!confirm(`確定平掉全部 ${syms.length} 個虛擬持倉？`)) return;
+  (async () => { for (const s of syms) await paperFlatten(s); paperLog("⛔ 緊急全部平倉已執行"); })();
+}
+
+/* ---------- 初始化 ---------- */
+window.addEventListener("DOMContentLoaded", () => {
+  renderParamInputs(); renderStrategies(); refreshPaperStratSelect();
+  $("bStrat").addEventListener("change", syncBacktestSymbol);
+  if (sessionStorage.getItem("ql_auth") === "1") showApp();
+});
