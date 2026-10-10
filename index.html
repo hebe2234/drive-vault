@@ -47,6 +47,7 @@
             <option value="ma_cross">均線交叉</option>
             <option value="rsi_mr">RSI 均值回歸</option>
             <option value="bollinger">布林通道</option>
+            <option value="custom">✏️ 自訂程式碼</option>
           </select></div>
           <div class="field"><label>階段</label><select id="sStage">
             <option value="idea">💡 點子</option><option value="backtest">📊 回測中</option>
@@ -55,6 +56,20 @@
           </select></div>
         </div>
         <div class="row" id="paramInputs"></div>
+        <div id="customBox" class="hidden">
+          <div class="field" style="width:100%"><label>參數（JSON 格式）</label>
+            <textarea id="sParamsJson" style="min-height:48px;font-family:monospace;font-size:13px">{"fast": 10, "slow": 30}</textarea></div>
+          <div class="field" style="width:100%"><label>訊號程式碼（JavaScript）</label>
+            <textarea id="sCode" style="min-height:230px;font-family:monospace;font-size:13px"></textarea></div>
+          <p class="mut">寫一個 <span style="font-family:monospace">function signal(i, closes, p)</span>：
+          <span style="font-family:monospace">i</span> 是當前 K 棒編號，<span style="font-family:monospace">closes</span> 是收盤價陣列，
+          <span style="font-family:monospace">p</span> 是上面的參數。可用
+          <span style="font-family:monospace">sma(n,i)</span>、
+          <span style="font-family:monospace">rsi(period)[i]</span>、
+          <span style="font-family:monospace">boll(period,mult).up / .dn / .mid[i]</span>。
+          回傳 <span style="font-family:monospace">1</span>=買、<span style="font-family:monospace">-1</span>=賣、
+          <span style="font-family:monospace">0</span>=無動作。只能用當下（含）以前的資料，不要偷看未來。</p>
+        </div>
         <div class="field" style="width:100%"><label>假說（為什麼這個訊號應該存在）</label>
           <textarea id="sHyp" placeholder="寫下經濟邏輯，寫不出來就不該回測"></textarea></div>
         <div class="row">
