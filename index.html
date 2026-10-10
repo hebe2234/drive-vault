@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quant Lab｜量化工作台</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=114">
 </head>
 <body>
 
@@ -104,6 +104,7 @@
         </div>
         <div class="row">
           <button class="btn" id="bRun" onclick="runBacktest()">▶ 執行回測</button>
+          <button class="btn ghost" onclick="testConnection()">🔍 測試行情連線</button>
         </div>
         <p class="mut">假設：訊號以當根 K 棒收盤價成交、做多全倉進出。回測只看歷史，不保證未來。</p>
         <div id="bStatus" class="mut"></div>
@@ -201,6 +202,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=114"></script>
 </body>
 </html>
