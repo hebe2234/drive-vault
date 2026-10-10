@@ -3,251 +3,106 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drive Vault｜個人資料保險箱</title>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+<title>🔐 私人小站</title>
 <style>
   :root { --bg:#0f1420; --card:#1a2233; --txt:#e8edf5; --mut:#8b96ad; --acc:#4f8cff; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--txt);
          font-family:-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
-         min-height:100vh; display:flex; justify-content:center; padding:24px 12px; }
-  .wrap { width:100%; max-width:640px; }
-  .card { background:var(--card); border-radius:14px; padding:22px; margin-bottom:16px;
-          box-shadow:0 4px 24px rgba(0,0,0,.35); }
-  h1 { font-size:20px; margin:0 0 6px; }
-  p.sub { color:var(--mut); font-size:13px; margin:0 0 14px; line-height:1.7; }
-  input[type=text], textarea { width:100%; background:#0d1320; color:var(--txt);
-      border:1px solid #2c3852; border-radius:8px; padding:10px 12px; font-size:14px; }
-  textarea { min-height:180px; resize:vertical; font-family:inherit; line-height:1.7; }
-  input:focus, textarea:focus { outline:none; border-color:var(--acc); }
-  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 6px; }
-  .btn { display:inline-block; background:var(--acc); color:#fff; border:0; border-radius:8px;
-         padding:10px 18px; font-size:14px; cursor:pointer; margin:10px 8px 0 0; }
+         min-height:100vh; }
+  .center { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .card { background:var(--card); border-radius:14px; padding:28px; width:100%; max-width:380px;
+          box-shadow:0 4px 24px rgba(0,0,0,.35); text-align:center; }
+  .card h1 { font-size:20px; margin:0 0 6px; }
+  .card p { color:var(--mut); font-size:13px; margin:0 0 16px; }
+  input[type=password] { width:100%; background:#0d1320; color:var(--txt); border:1px solid #2c3852;
+      border-radius:8px; padding:11px 12px; font-size:15px; text-align:center; letter-spacing:1px; }
+  input:focus { outline:none; border-color:var(--acc); }
+  .btn { display:block; width:100%; background:var(--acc); color:#fff; border:0; border-radius:8px;
+         padding:11px; font-size:15px; cursor:pointer; margin-top:12px; }
   .btn:hover { filter:brightness(1.12); }
-  .btn.ghost { background:transparent; border:1px solid #2c3852; color:var(--txt); }
-  .btn:disabled { opacity:.45; cursor:default; }
-  .userbar { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
-  .userbar img { width:32px; height:32px; border-radius:50%; }
-  .userbar .em { color:var(--mut); font-size:12px; }
-  #fileList { list-style:none; padding:0; margin:10px 0 0; }
-  #fileList li { padding:10px 4px; border-top:1px solid #2c3852; font-size:14px;
-                 display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  #fileList a { color:var(--acc); text-decoration:none; cursor:pointer; }
-  #fileList a:hover { text-decoration:underline; }
-  #fileList .dt { color:var(--mut); font-size:12px; white-space:nowrap; }
-  #status { font-size:13px; color:var(--mut); min-height:20px; margin-top:10px; }
-  #status.ok { color:#7ee2a8; } #status.err { color:#ff8f8f; }
-  .warn { background:#3a2b12; border:1px solid #8a6a2f; color:#f5cf7a; border-radius:8px;
-          padding:12px; font-size:13px; line-height:1.7; margin-bottom:16px; }
+  #gateMsg { font-size:13px; color:#ff8f8f; min-height:20px; margin-top:10px; }
   .hidden { display:none !important; }
+  /* ---- 內容區 ---- */
+  .wrap { max-width:720px; margin:0 auto; padding:32px 16px 64px; }
+  .hero { text-align:center; margin-bottom:28px; }
+  .hero h1 { font-size:26px; margin:0 0 8px; }
+  .hero p { color:var(--mut); font-size:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
+  .tile { background:var(--card); border-radius:12px; padding:20px; }
+  .tile h2 { font-size:16px; margin:0 0 8px; }
+  .tile p { color:var(--mut); font-size:13px; line-height:1.7; margin:0; }
+  .foot { text-align:center; color:var(--mut); font-size:12px; margin-top:40px; }
+  .foot button { background:none; border:1px solid #2c3852; color:var(--mut); border-radius:6px;
+                 padding:6px 12px; font-size:12px; cursor:pointer; margin-top:8px; }
 </style>
 </head>
 <body>
-<div class="wrap">
 
+<!-- 密碼門 -->
+<div id="gate" class="center">
   <div class="card">
-    <h1>🔐 Drive Vault</h1>
-    <p class="sub">用你自己的 Google 帳號登入，把個人資料存成你自己 Google Drive 裡的 Google Doc。<br>
-    資料只進你的 Drive —— 這個網站碰不到、也看不到你的內容。</p>
-    <div id="setupWarn" class="warn hidden"></div>
-    <div id="loginBox">
-      <button class="btn" id="btnLogin" onclick="signIn()">用 Google 登入</button>
+    <h1>🔐 私人小站</h1>
+    <p>請輸入密碼進入</p>
+    <input type="password" id="pw" placeholder="密碼" autocomplete="off"
+           onkeydown="if(event.key==='Enter')unlock()">
+    <button class="btn" onclick="unlock()">進入</button>
+    <div id="gateMsg"></div>
+  </div>
+</div>
+
+<!-- 內容 -->
+<div id="content" class="hidden">
+  <div class="wrap">
+    <div class="hero">
+      <h1>👋 歡迎回來</h1>
+      <p>這是你的私人小站起始頁。告訴我你想放什麼，我幫你換上真正的內容。</p>
     </div>
-    <div id="userBox" class="hidden">
-      <div class="userbar">
-        <img id="uPic" alt=""><div><div id="uName"></div><div class="em" id="uMail"></div></div>
-      </div>
-      <button class="btn ghost" onclick="signOut()">登出</button>
+    <div class="grid">
+      <div class="tile"><h2>📌 區塊一</h2><p>預留位置。可以放公告、連結、筆記入口。</p></div>
+      <div class="tile"><h2>📊 區塊二</h2><p>預留位置。可以放數據、圖表、追蹤表。</p></div>
+      <div class="tile"><h2>📝 區塊三</h2><p>預留位置。可以放文章、想法、待辦。</p></div>
+    </div>
+    <div class="foot">
+      簡易密碼門（擋路人等級）· 同一瀏覽器 session 內免重複輸入
+      <br><button onclick="lock()">鎖定</button>
     </div>
   </div>
-
-  <div class="card hidden" id="editorCard">
-    <h1>寫一份資料</h1>
-    <p class="sub">存檔後會在你的 Drive 建立「Drive Vault」資料夾，文件存在裡面。</p>
-    <label>標題</label>
-    <input type="text" id="docTitle" placeholder="例如：2026-10-10 交易筆記">
-    <label>內容</label>
-    <textarea id="docBody" placeholder="在這裡輸入你的個人資料…"></textarea>
-    <div>
-      <button class="btn" id="btnSave" onclick="saveDoc()">💾 存到我的 Google Drive</button>
-      <button class="btn ghost" onclick="clearEditor()">清空</button>
-    </div>
-    <div id="status"></div>
-  </div>
-
-  <div class="card hidden" id="listCard">
-    <h1>我的文件</h1>
-    <p class="sub">點標題把內容載回來編輯，再存檔會另存新文件。</p>
-    <ul id="fileList"></ul>
-  </div>
-
 </div>
 
 <script>
-/* ===== 設定：把你的 OAuth Client ID 貼在這裡 ===== */
-const CLIENT_ID = "PASTE_YOUR_CLIENT_ID_HERE";
-/* ============================================= */
+/* 密碼的 SHA-256 hash。想換密碼：把新密碼的 sha256 貼到這裡即可。 */
+const PASS_HASH = "8ef20bd7672c19c6b3f8bcd410923037b5c5839c8b1fe9b9423df5a5e86e1f04";
 
-const SCOPES = [
-  "https://www.googleapis.com/auth/drive.file",   // 只操作本 App 建立的檔案
-  "https://www.googleapis.com/auth/documents",    // 讀寫 Google Doc 內容
-  "openid", "email", "profile"
-].join(" ");
-
-const FOLDER_NAME = "Drive Vault";
-let accessToken = null, tokenClient = null, folderId = null;
-
-const $ = id => document.getElementById(id);
-function setStatus(msg, cls) {
-  const s = $("status"); s.textContent = msg; s.className = cls || "";
+async function sha256Hex(s) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
-
-window.onload = () => {
-  if (!CLIENT_ID || CLIENT_ID.startsWith("PASTE_")) {
-    const w = $("setupWarn");
-    w.classList.remove("hidden");
-    w.textContent = "⚠️ 網站擁有者尚未設定 Google OAuth Client ID，登入功能暫時無法使用。";
-    $("btnLogin").disabled = true;
-    return;
+function showContent() {
+  document.getElementById("gate").classList.add("hidden");
+  document.getElementById("content").classList.remove("hidden");
+}
+async function unlock() {
+  const v = document.getElementById("pw").value;
+  const msg = document.getElementById("gateMsg");
+  if (!v) { msg.textContent = "請輸入密碼"; return; }
+  msg.textContent = "驗證中…";
+  const h = await sha256Hex(v);
+  if (h === PASS_HASH) {
+    sessionStorage.setItem("pv_auth", "1");
+    document.getElementById("pw").value = "";
+    msg.textContent = "";
+    showContent();
+  } else {
+    msg.textContent = "密碼錯誤，再試一次";
   }
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES,
-    callback: async (resp) => {
-      if (resp.error) { setStatus("登入失敗：" + resp.error, "err"); return; }
-      accessToken = resp.access_token;
-      await onSignedIn();
-    },
-  });
-};
-
-function signIn() { tokenClient.requestAccessToken({ prompt: "consent" }); }
-function signOut() {
-  if (accessToken) google.accounts.oauth2.revoke(accessToken, () => {});
-  accessToken = null;
-  $("loginBox").classList.remove("hidden");
-  $("userBox").classList.add("hidden");
-  $("editorCard").classList.add("hidden");
-  $("listCard").classList.add("hidden");
 }
-
-async function gapi(path, opts = {}) {
-  const r = await fetch("https://www.googleapis.com/" + path, {
-    ...opts,
-    headers: { "Authorization": "Bearer " + accessToken,
-               "Content-Type": "application/json", ...(opts.headers || {}) },
-  });
-  if (r.status === 401) { // token 過期 → 重新要一個
-    accessToken = null;
-    tokenClient.requestAccessToken({ prompt: "" });
-    throw new Error("登入已過期，請再按一次登入");
-  }
-  if (!r.ok) throw new Error("API 錯誤 " + r.status);
-  return r.status === 204 ? null : r.json();
+function lock() {
+  sessionStorage.removeItem("pv_auth");
+  document.getElementById("content").classList.add("hidden");
+  document.getElementById("gate").classList.remove("hidden");
 }
-
-async function onSignedIn() {
-  const me = await gapi("oauth2/v3/userinfo");
-  $("uName").textContent = me.name || "";
-  $("uMail").textContent = me.email || "";
-  if (me.picture) $("uPic").src = me.picture;
-  $("loginBox").classList.add("hidden");
-  $("userBox").classList.remove("hidden");
-  $("editorCard").classList.remove("hidden");
-  $("listCard").classList.remove("hidden");
-  setStatus("已登入，準備就緒。", "ok");
-  await refreshList();
-}
-
-async function ensureFolder() {
-  if (folderId) return folderId;
-  const q = encodeURIComponent(
-    `mimeType='application/vnd.google-apps.folder' and name='${FOLDER_NAME}' and trashed=false`);
-  const res = await gapi(`drive/v3/files?q=${q}&fields=files(id)&spaces=drive`);
-  if (res.files && res.files.length) { folderId = res.files[0].id; return folderId; }
-  const created = await gapi("drive/v3/files?fields=id", {
-    method: "POST",
-    body: JSON.stringify({ name: FOLDER_NAME, mimeType: "application/vnd.google-apps.folder" }),
-  });
-  folderId = created.id; return folderId;
-}
-
-function today() {
-  const d = new Date(), p = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
-}
-
-async function saveDoc() {
-  const title = $("docTitle").value.trim() || ("未命名 - " + today());
-  const body = $("docBody").value;
-  if (!body.trim()) { setStatus("內容是空的，先寫點東西吧。", "err"); return; }
-  $("btnSave").disabled = true;
-  setStatus("儲存中…");
-  try {
-    const fid = await ensureFolder();
-    const file = await gapi("drive/v3/files?fields=id", {
-      method: "POST",
-      body: JSON.stringify({
-        name: `${title} (${today()})`,
-        mimeType: "application/vnd.google-apps.document",
-        parents: [fid],
-      }),
-    });
-    await gapi(`docs/v1/documents/${file.id}:batchUpdate`, {
-      method: "POST",
-      body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text: body } }] }),
-    });
-    setStatus("✅ 已存到你的 Google Drive（Drive Vault 資料夾）。", "ok");
-    $("docTitle").value = ""; $("docBody").value = "";
-    await refreshList();
-  } catch (e) { setStatus("儲存失敗：" + e.message, "err"); }
-  $("btnSave").disabled = false;
-}
-
-function docText(doc) {
-  let out = "";
-  const els = ((doc.body || {}).content) || [];
-  for (const el of els) {
-    const p = el.paragraph;
-    if (!p) continue;
-    for (const pe of (p.elements || [])) {
-      if (pe.textRun) out += pe.textRun.content || "";
-    }
-  }
-  return out.replace(/\n$/, "");
-}
-
-async function refreshList() {
-  const fid = await ensureFolder();
-  const q = encodeURIComponent(
-    `mimeType='application/vnd.google-apps.document' and '${fid}' in parents and trashed=false`);
-  const res = await gapi(
-    `drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=50&fields=files(id,name,createdTime)`);
-  const ul = $("fileList"); ul.innerHTML = "";
-  for (const f of (res.files || [])) {
-    const li = document.createElement("li");
-    const a = document.createElement("a");
-    a.textContent = f.name;
-    a.onclick = () => loadDoc(f.id, f.name);
-    const dt = document.createElement("span");
-    dt.className = "dt"; dt.textContent = (f.createdTime || "").slice(0, 10);
-    li.appendChild(a); li.appendChild(dt); ul.appendChild(li);
-  }
-  if (!ul.children.length) ul.innerHTML = "<li>還沒有文件，寫第一份吧。</li>";
-}
-
-async function loadDoc(id, name) {
-  setStatus("載入中…");
-  try {
-    const doc = await gapi(`docs/v1/documents/${id}?fields=body`);
-    $("docTitle").value = name.replace(/\s*\(\d{4}-\d{2}-\d{2}\)$/, "");
-    $("docBody").value = docText(doc);
-    setStatus("已載入「" + name + "」，編輯後存檔會另存新文件。", "ok");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (e) { setStatus("載入失敗：" + e.message, "err"); }
-}
-
-function clearEditor() { $("docTitle").value = ""; $("docBody").value = ""; setStatus(""); }
+if (sessionStorage.getItem("pv_auth") === "1") showContent();
 </script>
 </body>
 </html>
