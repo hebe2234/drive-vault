@@ -72,7 +72,7 @@
 
 <script>
 /* 密碼的 SHA-256 hash。想換密碼：把新密碼的 sha256 貼到這裡即可。 */
-const PASS_HASH = "8ef20bd7672c19c6b3f8bcd410923037b5c5839c8b1fe9b9423df5a5e86e1f04";
+const PASS_HASH = "1129b21a2ed9ea752cdfb776cc6fc7f8855b7345f27fc25cad9e3c5fbf14026f";
 
 async function sha256Hex(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
