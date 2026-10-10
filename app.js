@@ -64,14 +64,15 @@ const TPL_PARAMS = {
   ma_cross: [{ k: "fast", label: "快線", def: 10 }, { k: "slow", label: "慢線", def: 30 }],
   rsi_mr: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }],
   bollinger: [{ k: "period", label: "週期", def: 20 }, { k: "mult", label: "倍數", def: 2 }],
-  vix_fear: [{ k: "lookback", label: "分位回看（天）", def: 252 }, { k: "buyPct", label: "買入分位（恐懼）", def: 0.9 }, { k: "sellPct", label: "賣出分位（安逸）", def: 0.2 }],
+  vix_fear: [{ k: "lookback", label: "分位回看（天）", def: 252 }, { k: "wMax", label: "恐懼時倉位", def: 1 }, { k: "wMin", label: "安逸時倉位", def: 0 }],
   custom: [],
 };
 const TPL_FORMULA = {
   ma_cross: p => `SMA(${p.fast}) 由下向上穿越 SMA(${p.slow}) → 買入（全倉）；由上向下跌破 → 賣出（全出）。以當根 K 棒收盤價成交。`,
   rsi_mr: p => `RSI(${p.period}) < ${p.oversold} → 買入；RSI(${p.period}) > ${p.overbought} → 賣出。賭情緒超賣超買後的均值回歸。`,
   bollinger: p => `收盤價跌破下軌（布林 ${p.period} 根、${p.mult}σ）→ 買入；漲破上軌 → 賣出。`,
-  vix_fear: p => `VIX 在過去 ${p.lookback} 天的分位數 ≥ ${p.buyPct}（極度恐懼）→ 買入；≤ ${p.sellPct}（極度安逸）→ 賣出。別人恐懼我貪婪，賭 VIX 均值回歸。VIX 資料來自 FRED，每日自動更新。`,
+  vix_fear: p => { const wMax = p.wMax != null ? p.wMax : 1, wMin = p.wMin != null ? p.wMin : 0;
+    return `VIX 過去 ${p.lookback || 252} 天分位數 → 目標倉位（${wMin}~${wMax} 線性對應，越恐懼倉位越重）。分級倉位、每日再平衡（偏離 >5% 才調倉）。`; },
 };
 const DEFAULT_CUSTOM_CODE =
 `// signal(i, closes, p) → 回傳 1=買入, -1=賣出, 0=無動作
@@ -165,7 +166,7 @@ function renderStrategies() {
       : `<div style="margin:6px 0">${esc((TPL_FORMULA[s.template] || (() => ""))(s.params || {}))}</div>`;
     const lb = s.lastBacktest;
     const lbHtml = lb
-      ? `<div>上次回測（${esc(lb.date)}）：總報酬 <b class="${cls(lb.totalRet)}">${fmtPct(lb.totalRet)}</b> · Sharpe ${Number(lb.sharpe).toFixed(2)} · 最大回撤 ${fmtPct(lb.maxDD)} · 勝率 ${fmtPct(lb.winRate)} · ${lb.nTrades} 筆交易</div>`
+      ? `<div>上次回測（${esc(lb.date)}）：總報酬 <b class="${cls(lb.totalRet)}">${fmtPct(lb.totalRet)}</b> · Sharpe ${Number(lb.sharpe).toFixed(2)} · 最大回撤 ${fmtPct(lb.maxDD)} · 勝率 ${lb.winRate == null ? "—" : fmtPct(lb.winRate)} · ${lb.nTrades} 筆交易</div>`
       : `<div>尚未回測 — 按「去回測」跑一次，成績會記在這裡。</div>`;
     d.innerHTML = `
       <span class="stage stage-${s.stage}">${STAGE_LABEL[s.stage] || s.stage}</span>
@@ -269,6 +270,9 @@ function alignVix(barTimes, interval, vd) {
   return out;
 }
 
+/* 訊號產生：回傳 { mode, sig, targets }
+   discrete：舊式 -1/0/1（1=買、-1=賣、0=無動作）
+   target：分級倉位，targets[i] 為 0~1 目標權重（null=維持不動） */
 function genSignals(closes, template, p, code, vix) {
   const n = closes.length, sig = new Array(n).fill(0);
   if (template === "ma_cross") {
@@ -280,6 +284,7 @@ function genSignals(closes, template, p, code, vix) {
       if (f0 <= s0 && f1 > s1) sig[i] = 1;
       else if (f0 >= s0 && f1 < s1) sig[i] = -1;
     }
+    return { mode: "discrete", sig };
   } else if (template === "rsi_mr") {
     const r = rsiArr(closes, p.period);
     for (let i = 0; i < n; i++) {
@@ -287,6 +292,7 @@ function genSignals(closes, template, p, code, vix) {
       if (r[i] < p.oversold) sig[i] = 1;
       else if (r[i] > p.overbought) sig[i] = -1;
     }
+    return { mode: "discrete", sig };
   } else if (template === "bollinger") {
     const { up, dn } = bollArr(closes, p.period, p.mult);
     for (let i = 0; i < n; i++) {
@@ -294,17 +300,19 @@ function genSignals(closes, template, p, code, vix) {
       if (closes[i] < dn[i]) sig[i] = 1;
       else if (closes[i] > up[i]) sig[i] = -1;
     }
+    return { mode: "discrete", sig };
   } else if (template === "vix_fear") {
-    const lb = p.lookback || 252, bp = p.buyPct != null ? p.buyPct : 0.9, sp = p.sellPct != null ? p.sellPct : 0.2;
+    const lb = p.lookback || 252;
+    const wMax = p.wMax != null ? p.wMax : 1, wMin = p.wMin != null ? p.wMin : 0;
+    const targets = new Array(n).fill(null);
     for (let i = 0; i < n; i++) {
       const v = vix ? vix[i] : null;
       if (v == null || i < lb) continue;
       let cnt = 0;
       for (let k = i - lb + 1; k <= i; k++) { const w = vix[k]; if (w != null && w <= v) cnt++; }
-      const pct = cnt / lb;
-      if (pct >= bp) sig[i] = 1;        // 極度恐懼 → 貪婪買入
-      else if (pct <= sp) sig[i] = -1;  // 極度安逸 → 恐懼賣出
+      targets[i] = wMin + (wMax - wMin) * (cnt / lb); // 越恐懼倉位越重
     }
+    return { mode: "target", targets };
   } else if (template === "custom") {
     const rsiCache = {}, bollCache = {};
     const h = {
@@ -317,30 +325,56 @@ function genSignals(closes, template, p, code, vix) {
       fn = new Function("i", "closes", "p", "sma", "rsi", "boll", "vix",
         (code || "") + "\n;return (typeof signal==='function') ? signal(i,closes,p,sma,rsi,boll,vix) : 0;");
     } catch (e) { throw new Error("自訂程式碼編譯失敗：" + e.message); }
+    const raw = new Array(n);
     for (let i = 0; i < n; i++) {
       let v = 0;
       try { v = fn(i, closes, p, h.sma, h.rsi, h.boll, vix); }
       catch (e) { throw new Error(`自訂程式碼在第 ${i} 根 K 棒出錯：` + e.message); }
-      sig[i] = v === 1 ? 1 : v === -1 ? -1 : 0;
+      raw[i] = v;
     }
+    if (raw.some(v => typeof v === "number" && !isNaN(v) && v !== -1 && v !== 0 && v !== 1)) {
+      return { mode: "target", targets: raw.map(v => (v == null || isNaN(Number(v))) ? null : Math.min(1, Math.max(0, Number(v)))) };
+    }
+    return { mode: "discrete", sig: raw.map(v => v === 1 ? 1 : v === -1 ? -1 : 0) };
   }
-  return sig;
+  return { mode: "discrete", sig };
 }
 
-/* 回測引擎：做多全倉進出 */
+/* 回測引擎：分級倉位 — 每根 K 棒朝目標權重（0~1）再平衡
+   舊模板的 1/-1 視為 100%/0%，行為與舊版全倉進出完全一致 */
+const REBAL_TOL = 0.05; // 權重偏離超過 5% 才調倉，避免頻繁小額進出
 function runEngine(closes, template, params, feeRate, code, times, vix) {
   const fee = feeRate / 100;
-  const sig = genSignals(closes, template, params, code, vix);
-  let cash = 10000, pos = 0, entryPrice = 0, entryIdx = 0;
-  const equity = [], trades = [];
+  const { mode, sig, targets } = genSignals(closes, template, params, code, vix);
+  const tgt = mode === "target" ? targets : sig.map(s => s === 1 ? 1 : s === -1 ? 0 : null);
+  let cash = 10000, pos = 0;
+  const equity = [], trades = [], markers = [], rounds = [];
+  let entry = null; // discrete 模式進出場配對
   for (let i = 0; i < closes.length; i++) {
-    const px = closes[i];
-    if (sig[i] === 1 && pos === 0 && cash > 0) { pos = (cash * (1 - fee)) / px; entryPrice = px; entryIdx = i; cash = 0; }
-    else if (sig[i] === -1 && pos > 0) {
-      cash = pos * px * (1 - fee);
-      trades.push({ in: entryIdx, out: i, ep: entryPrice, xp: px, ret: px / entryPrice - 1,
-        inTime: times ? times[entryIdx] : null, outTime: times ? times[i] : null });
-      pos = 0;
+    const px = closes[i], t = tgt[i];
+    if (t != null) {
+      const eq = cash + pos * px, wNow = eq > 0 ? (pos * px) / eq : 0;
+      if (Math.abs(t - wNow) > REBAL_TOL) {
+        const dv = eq * t - pos * px; // >0 加倉，<0 減倉
+        const tm = times ? times[i] : null;
+        if (dv > 0 && cash > 0) {
+          const spend = Math.min(dv, cash);
+          pos += (spend * (1 - fee)) / px; cash -= spend;
+          trades.push({ i, time: tm, dir: "buy", px, wBefore: wNow, wAfter: t });
+          markers.push({ i, dir: "buy" });
+          if (mode === "discrete" && !entry) entry = { idx: i, px, time: tm };
+        } else if (dv < 0 && pos > 0) {
+          const sellVal = Math.min(-dv, pos * px);
+          cash += sellVal * (1 - fee); pos -= sellVal / px;
+          trades.push({ i, time: tm, dir: "sell", px, wBefore: wNow, wAfter: t });
+          markers.push({ i, dir: "sell" });
+          if (mode === "discrete" && entry) {
+            rounds.push({ in: entry.idx, out: i, ep: entry.px, xp: px, ret: px / entry.px - 1,
+              inTime: entry.time, outTime: tm });
+            entry = null;
+          }
+        }
+      }
     }
     equity.push(cash + pos * px);
   }
@@ -354,15 +388,17 @@ function runEngine(closes, template, params, feeRate, code, times, vix) {
   const benchEquity = closes.map(c => c / closes[0] * 10000);
   let bpeak = -1e18, bmaxDD = 0;
   benchEquity.forEach(e => { bpeak = Math.max(bpeak, e); bmaxDD = Math.min(bmaxDD, e / bpeak - 1); });
-  const wins = trades.filter(t => t.ret > 0);
-  const grossW = wins.reduce((a, t) => a + t.ret, 0), grossL = -trades.filter(t => t.ret <= 0).reduce((a, t) => a + t.ret, 0);
+  const wins = rounds.filter(t => t.ret > 0);
+  const grossW = wins.reduce((a, t) => a + t.ret, 0), grossL = -rounds.filter(t => t.ret <= 0).reduce((a, t) => a + t.ret, 0);
+  const isDiscrete = mode === "discrete";
   return {
-    equity, trades, sig,
+    equity, trades, rounds, markers, mode,
     totalRet: equity[equity.length - 1] / equity[0] - 1,
     sharpe: sd === 0 ? 0 : (mean / sd) * Math.sqrt(365),
-    maxDD, winRate: trades.length ? wins.length / trades.length : 0,
-    nTrades: trades.length,
-    profitFactor: grossL === 0 ? (grossW > 0 ? Infinity : 0) : grossW / grossL,
+    maxDD,
+    winRate: isDiscrete ? (rounds.length ? wins.length / rounds.length : 0) : null,
+    nTrades: isDiscrete ? rounds.length : trades.length,
+    profitFactor: isDiscrete ? (grossL === 0 ? (grossW > 0 ? Infinity : 0) : grossW / grossL) : null,
     bench: { equity: benchEquity, totalRet: benchEquity[benchEquity.length - 1] / benchEquity[0] - 1, maxDD: bmaxDD },
   };
 }
@@ -488,7 +524,8 @@ async function runBacktest() {
 }
 function renderBacktestResult({ r, symbol, name, times }) {
   $("bResult").classList.remove("hidden");
-  const pf = r.profitFactor === Infinity ? "∞" : r.profitFactor.toFixed(2);
+  const pf = r.profitFactor == null ? "—" : r.profitFactor === Infinity ? "∞" : r.profitFactor.toFixed(2);
+  const wrTxt = r.winRate == null ? "—" : fmtPct(r.winRate);
   const yrs = (times && times[0] != null && r.equity.length >= 2)
     ? (times[times.length - 1] - times[0]) / (365.25 * 86400000) : 0;
   const cagrOf = eq => yrs > 0 ? Math.pow(eq[eq.length - 1] / eq[0], 1 / yrs) - 1 : null;
@@ -504,20 +541,31 @@ function renderBacktestResult({ r, symbol, name, times }) {
     <div class="metric"><div class="k">Sharpe（年化）</div><div class="v ${cls(r.sharpe)}">${r.sharpe.toFixed(2)}</div></div>
     <div class="metric"><div class="k">最大回撤</div><div class="v neg">${fmtPct(r.maxDD)}</div></div>
     <div class="metric"><div class="k">大盤最大回撤</div><div class="v neg">${r.bench ? fmtPct(r.bench.maxDD) : "—"}</div></div>
-    <div class="metric"><div class="k">勝率</div><div class="v">${fmtPct(r.winRate)}</div></div>
-    <div class="metric"><div class="k">交易次數</div><div class="v">${r.nTrades}</div></div>
+    <div class="metric"><div class="k">勝率</div><div class="v">${wrTxt}</div></div>
+    <div class="metric"><div class="k">${r.mode === "target" ? "調倉次數" : "交易次數"}</div><div class="v">${r.nTrades}</div></div>
     <div class="metric"><div class="k">Profit Factor</div><div class="v">${pf}</div></div>`;
-  drawChart($("bChart"), r.equity, r.trades.map(t => t.out), r.bench ? r.bench.equity : null);
+  drawChart($("bChart"), r.equity, r.markers, r.bench ? r.bench.equity : null);
+  const isT = r.mode === "target";
+  $("bTradesTitle").textContent = isT ? "調倉明細（近 50 筆）" : "交易明細（近 50 筆）";
+  $("bTradesHead").innerHTML = isT
+    ? `<tr><th>#</th><th>時間</th><th>方向</th><th class="num">價格</th><th class="num">倉位</th></tr>`
+    : `<tr><th>#</th><th>進場</th><th>出場</th><th class="num">進場價</th><th class="num">出場價</th><th class="num">報酬率</th></tr>`;
   const tb = $("bTrades"); tb.innerHTML = "";
-  r.trades.slice(-50).reverse().forEach((t, i) => {
+  const tlist = isT ? r.trades : r.rounds;
+  tlist.slice(-50).reverse().forEach((t, i) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.trades.length - i}</td><td title="K 棒 #${t.in}">${fmtT(t.inTime)}</td><td title="K 棒 #${t.out}">${fmtT(t.outTime)}</td>
-      <td class="num">${t.ep.toFixed(2)}</td><td class="num">${t.xp.toFixed(2)}</td>
-      <td class="num ${cls(t.ret)}">${fmtPct(t.ret)}</td>`;
+    tr.innerHTML = isT
+      ? `<td>${tlist.length - i}</td><td title="K 棒 #${t.i}">${fmtT(t.time)}</td>
+         <td style="color:${t.dir === "buy" ? "#3ddc84" : "#ff7a7a"}">${t.dir === "buy" ? "加倉" : "減倉"}</td>
+         <td class="num">${t.px.toFixed(2)}</td>
+         <td class="num">${(t.wBefore * 100).toFixed(0)}% → ${(t.wAfter * 100).toFixed(0)}%</td>`
+      : `<td>${tlist.length - i}</td><td title="K 棒 #${t.in}">${fmtT(t.inTime)}</td><td title="K 棒 #${t.out}">${fmtT(t.outTime)}</td>
+         <td class="num">${t.ep.toFixed(2)}</td><td class="num">${t.xp.toFixed(2)}</td>
+         <td class="num ${cls(t.ret)}">${fmtPct(t.ret)}</td>`;
     tb.appendChild(tr);
   });
 }
-function drawChart(cv, equity, exits, bench) {
+function drawChart(cv, equity, markers, bench) {
   const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
   const all = (bench && bench.length === equity.length) ? equity.concat(bench) : equity;
@@ -537,8 +585,12 @@ function drawChart(cv, equity, exits, bench) {
   ctx.fillText("max " + fmt$(max), 10, 14); ctx.fillText("min " + fmt$(min), 10, H - 4);
   ctx.fillStyle = "#4f8cff"; ctx.fillText("— 策略", W - 108, 14);
   if (bench && bench.length === equity.length) { ctx.fillStyle = "#6b7688"; ctx.fillText("- - 大盤", W - 108, 28); }
-  ctx.fillStyle = "#ff7a7a";
-  (exits || []).forEach(i => { ctx.beginPath(); ctx.arc(X(i), Y(equity[i]), 3, 0, 7); ctx.fill(); });
+  ctx.fillStyle = "#3ddc84"; ctx.fillText("● 加倉", W - 108, 42);
+  ctx.fillStyle = "#ff7a7a"; ctx.fillText("● 減倉", W - 108, 56);
+  (markers || []).slice(-300).forEach(m => {
+    ctx.fillStyle = m.dir === "buy" ? "#3ddc84" : "#ff7a7a";
+    ctx.beginPath(); ctx.arc(X(m.i), Y(equity[m.i]), 3, 0, 7); ctx.fill();
+  });
 }
 
 /* ---------- Paper Trading（虛擬） ---------- */
@@ -653,24 +705,54 @@ async function runnerTick() {
       try { vix = alignVix(klines.map(k => k[0]), "1m", await loadVixData()); }
       catch (e) { paperLog("[自動] VIX 資料載入失敗，跳過本次"); return; }
     }
-    const sig = genSignals(closes, s.template, s.params, s.code || "", vix);
-    const last = sig[sig.length - 2]; // 用已收盤的上一根，避免未收盤跳動
+    const { mode, sig, targets } = genSignals(closes, s.template, s.params, s.code || "", vix);
     const px = closes[closes.length - 1];
     const pos = DB.paper.positions[s.symbol];
     const { equity } = paperEquity({ [s.symbol]: px });
-    if (last === 1 && !pos) {
-      const budget = equity * (runnerState.alloc / 100), qty = (budget * (1 - PAPER_FEE)) / px;
-      if (budget <= DB.paper.cash && qty > 0) {
-        DB.paper.positions[s.symbol] = { qty, avg: px }; DB.paper.cash -= budget;
-        paperLog(`[自動] ${s.name} 買訊號 → 買入 ${qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
-      } else paperLog(`[自動] ${s.name} 買訊號，但現金不足`);
-    } else if (last === -1 && pos) {
-      DB.paper.cash += pos.qty * px * (1 - PAPER_FEE);
-      paperLog(`[自動] ${s.name} 賣訊號 → 平倉 ${pos.qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
-      delete DB.paper.positions[s.symbol];
+    let statusSig = "無";
+    if (mode === "discrete") {
+      const last = sig[sig.length - 2]; // 用已收盤的上一根，避免未收盤跳動
+      if (last === 1 && !pos) {
+        const budget = equity * (runnerState.alloc / 100), qty = (budget * (1 - PAPER_FEE)) / px;
+        if (budget <= DB.paper.cash && qty > 0) {
+          DB.paper.positions[s.symbol] = { qty, avg: px }; DB.paper.cash -= budget;
+          paperLog(`[自動] ${s.name} 買訊號 → 買入 ${qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
+        } else paperLog(`[自動] ${s.name} 買訊號，但現金不足`);
+        statusSig = "買入";
+      } else if (last === -1 && pos) {
+        DB.paper.cash += pos.qty * px * (1 - PAPER_FEE);
+        paperLog(`[自動] ${s.name} 賣訊號 → 平倉 ${pos.qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
+        delete DB.paper.positions[s.symbol];
+        statusSig = "賣出";
+      }
+    } else {
+      const lastT = targets[targets.length - 2]; // 已收盤的上一根
+      if (lastT != null) {
+        statusSig = `目標權重 ${(lastT * 100).toFixed(0)}%`;
+        const targetVal = equity * (runnerState.alloc / 100) * lastT;
+        const curVal = pos ? pos.qty * px : 0, dv = targetVal - curVal;
+        if (Math.abs(dv) > equity * 0.005) {
+          if (dv > 0) {
+            const spend = Math.min(dv, DB.paper.cash);
+            if (spend > 0) {
+              const qty = (spend * (1 - PAPER_FEE)) / px;
+              DB.paper.positions[s.symbol] = { qty: (pos ? pos.qty : 0) + qty, avg: px };
+              DB.paper.cash -= spend;
+              paperLog(`[自動] ${s.name} 加倉 → 目標 ${(lastT * 100).toFixed(0)}%，買入 ${qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
+            } else paperLog(`[自動] ${s.name} 加倉訊號，但現金不足`);
+          } else {
+            const sellVal = Math.min(-dv, curVal), qty = sellVal / px;
+            DB.paper.cash += sellVal * (1 - PAPER_FEE);
+            const newQty = pos.qty - qty;
+            if (newQty <= 1e-9) delete DB.paper.positions[s.symbol];
+            else DB.paper.positions[s.symbol] = { qty: newQty, avg: pos.avg };
+            paperLog(`[自動] ${s.name} 減倉 → 目標 ${(lastT * 100).toFixed(0)}%，賣出 ${qty.toFixed(6)} ${s.symbol} @ ${fmt$(px)}`);
+          }
+        }
+      }
     }
     saveDB(); refreshPaper();
-    $("pRunnerStatus").textContent = `運行中：${s.name} @ ${s.symbol}，上次檢查 ${new Date().toLocaleTimeString()}，最新訊號=${last === 1 ? "買入" : last === -1 ? "賣出" : "無"}`;
+    $("pRunnerStatus").textContent = `運行中：${s.name} @ ${s.symbol}，上次檢查 ${new Date().toLocaleTimeString()}，最新訊號=${statusSig}`;
   } catch (e) { $("pRunnerStatus").textContent = "自動執行出錯：" + e.message + "（會繼續重試）"; }
 }
 function startPaperRunner() {
