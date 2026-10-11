@@ -64,15 +64,14 @@ const TPL_PARAMS = {
   ma_cross: [{ k: "fast", label: "快線", def: 10 }, { k: "slow", label: "慢線", def: 30 }],
   rsi_mr: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }],
   bollinger: [{ k: "period", label: "週期", def: 20 }, { k: "mult", label: "倍數", def: 2 }],
-  vix_fear: [{ k: "lookback", label: "分位回看（天）", def: 252 }, { k: "wMax", label: "恐懼時倉位", def: 1 }, { k: "wMin", label: "安逸時倉位", def: 0 }],
+  vix_fear: [{ k: "lookback", label: "分位回看（天）", def: 252 }, { k: "buyPct", label: "買入分位（恐懼）", def: 0.9 }, { k: "sellPct", label: "賣出分位（安逸）", def: 0.2 }],
   custom: [],
 };
 const TPL_FORMULA = {
   ma_cross: p => `SMA(${p.fast}) 由下向上穿越 SMA(${p.slow}) → 買入（全倉）；由上向下跌破 → 賣出（全出）。以當根 K 棒收盤價成交。`,
   rsi_mr: p => `RSI(${p.period}) < ${p.oversold} → 買入；RSI(${p.period}) > ${p.overbought} → 賣出。賭情緒超賣超買後的均值回歸。`,
   bollinger: p => `收盤價跌破下軌（布林 ${p.period} 根、${p.mult}σ）→ 買入；漲破上軌 → 賣出。`,
-  vix_fear: p => { const wMax = p.wMax != null ? p.wMax : 1, wMin = p.wMin != null ? p.wMin : 0;
-    return `VIX 過去 ${p.lookback || 252} 天分位數 → 目標倉位（${wMin}~${wMax} 線性對應，越恐懼倉位越重）。分級倉位、每日再平衡（偏離 >10% 才調倉）。`; },
+  vix_fear: p => `VIX 過去 ${p.lookback || 252} 天分位數 ≥ ${p.buyPct != null ? p.buyPct : 0.9}（極度恐懼）→ 全倉買入；≤ ${p.sellPct != null ? p.sellPct : 0.2}（極度安逸）→ 全出。別人恐懼我貪婪，賭 VIX 均值回歸。`,
 };
 const DEFAULT_CUSTOM_CODE =
 `// signal(i, closes, p) → 回傳 1=買入, -1=賣出, 0=無動作
@@ -302,17 +301,17 @@ function genSignals(closes, template, p, code, vix) {
     }
     return { mode: "discrete", sig };
   } else if (template === "vix_fear") {
-    const lb = p.lookback || 252;
-    const wMax = p.wMax != null ? p.wMax : 1, wMin = p.wMin != null ? p.wMin : 0;
-    const targets = new Array(n).fill(null);
+    const lb = p.lookback || 252, bp = p.buyPct != null ? p.buyPct : 0.9, sp = p.sellPct != null ? p.sellPct : 0.2;
     for (let i = 0; i < n; i++) {
       const v = vix ? vix[i] : null;
       if (v == null || i < lb) continue;
       let cnt = 0;
       for (let k = i - lb + 1; k <= i; k++) { const w = vix[k]; if (w != null && w <= v) cnt++; }
-      targets[i] = wMin + (wMax - wMin) * (cnt / lb); // 越恐懼倉位越重
+      const pct = cnt / lb;
+      if (pct >= bp) sig[i] = 1;        // 極度恐懼 → 貪婪買入（全倉）
+      else if (pct <= sp) sig[i] = -1;  // 極度安逸 → 恐懼賣出（全出）
     }
-    return { mode: "target", targets };
+    return { mode: "discrete", sig };
   } else if (template === "custom") {
     const rsiCache = {}, bollCache = {};
     const h = {
