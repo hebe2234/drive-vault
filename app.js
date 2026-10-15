@@ -59,18 +59,20 @@ function saveDB() { localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
 let DB = loadDB(); saveDB();
 
 const STAGE_LABEL = { idea: "💡 點子", backtest: "📊 回測中", paper: "📝 Paper", live: "🚀 實盤", retired: "🗑 淘汰" };
-const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道", vix_fear: "VIX 恐懼貪婪", custom: "自訂程式碼" };
+const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道", vix_fear: "VIX 恐懼貪婪", macd: "MACD 動量", custom: "自訂程式碼" };
 const TPL_PARAMS = {
   ma_cross: [{ k: "fast", label: "快線", def: 10 }, { k: "slow", label: "慢線", def: 30 }],
   rsi_mr: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }],
   bollinger: [{ k: "period", label: "週期", def: 20 }, { k: "mult", label: "倍數", def: 2 }],
   vix_fear: [{ k: "lookback", label: "分位回看（天）", def: 252 }, { k: "buyPct", label: "買入分位（恐懼）", def: 0.9 }, { k: "sellPct", label: "賣出分位（安逸）", def: 0.2 }],
+  macd: [{ k: "fast", label: "快 EMA", def: 12 }, { k: "slow", label: "慢 EMA", def: 26 }, { k: "sig", label: "訊號線", def: 9 }],
   custom: [],
 };
 const TPL_FORMULA = {
   ma_cross: p => `SMA(${p.fast}) 由下向上穿越 SMA(${p.slow}) → 買入（全倉）；由上向下跌破 → 賣出（全出）。以當根 K 棒收盤價成交。`,
   rsi_mr: p => `RSI(${p.period}) < ${p.oversold} → 買入；RSI(${p.period}) > ${p.overbought} → 賣出。賭情緒超賣超買後的均值回歸。`,
   bollinger: p => `收盤價跌破下軌（布林 ${p.period} 根、${p.mult}σ）→ 買入；漲破上軌 → 賣出。`,
+  macd: p => `MACD(${p.fast},${p.slow}) 快線由下向上穿越訊號線(${p.sig}) → 買入（全倉）；由上向下跌破 → 賣出（全出）。經典動量交叉，以當根 K 棒收盤價成交。`,
   vix_fear: p => `VIX 過去 ${p.lookback || 252} 天分位數 ≥ ${p.buyPct != null ? p.buyPct : 0.9}（極度恐懼）→ 全倉買入；≤ ${p.sellPct != null ? p.sellPct : 0.2}（極度安逸）→ 全出。別人恐懼我貪婪，賭 VIX 均值回歸。`,
 };
 const DEFAULT_CUSTOM_CODE =
@@ -234,6 +236,30 @@ function bollArr(closes, period, mult) {
   return { up, dn, mid };
 }
 
+function emaArr(closes, n) {
+  const out = new Array(closes.length).fill(null);
+  if (closes.length < n) return out;
+  const k = 2 / (n + 1);
+  let s = 0; for (let j = 0; j < n; j++) s += closes[j];
+  let e = s / n; out[n - 1] = e;
+  for (let i = n; i < closes.length; i++) { e = closes[i] * k + e * (1 - k); out[i] = e; }
+  return out;
+}
+/* MACD: dif = EMA(fast)-EMA(slow)（i>=slow-1 起有效）；dea = dif 的 EMA(sig) */
+function macdArr(closes, fast, slow, sigP) {
+  const F = emaArr(closes, fast), S = emaArr(closes, slow);
+  const dif = new Array(closes.length).fill(null), dea = new Array(closes.length).fill(null);
+  const s0 = slow - 1, k = 2 / (sigP + 1);
+  const valid = [];
+  for (let i = s0; i < closes.length; i++) { if (F[i] != null && S[i] != null) { dif[i] = F[i] - S[i]; valid.push(i); } }
+  if (valid.length >= sigP) {
+    let e = 0; for (let j = 0; j < sigP; j++) e += dif[valid[j]]; e /= sigP;
+    dea[valid[sigP - 1]] = e; let prev = e;
+    for (let j = sigP; j < valid.length; j++) { prev = dif[valid[j]] * k + prev * (1 - k); dea[valid[j]] = prev; }
+  }
+  return { dif, dea };
+}
+
 /* 訊號：1=買, -1=賣, 0=無（訊號用當根收盤產生、當根收盤成交） */
 /* ---------- VIX 資料（FRED VIXCLS，每日；vix.csv 與網站同源，無 CORS 問題） ---------- */
 let _vixCache = null;
@@ -312,12 +338,21 @@ function genSignals(closes, template, p, code, vix) {
       else if (pct <= sp) sig[i] = -1;  // 極度安逸 → 恐懼賣出（全出）
     }
     return { mode: "discrete", sig };
+  } else if (template === "macd") {
+    const { dif, dea } = macdArr(closes, p.fast, p.slow, p.sig);
+    for (let i = 1; i < n; i++) {
+      if (dif[i] == null || dea[i] == null || dif[i - 1] == null || dea[i - 1] == null) continue;
+      if (dif[i - 1] <= dea[i - 1] && dif[i] > dea[i]) sig[i] = 1;
+      else if (dif[i - 1] >= dea[i - 1] && dif[i] < dea[i]) sig[i] = -1;
+    }
+    return { mode: "discrete", sig };
   } else if (template === "custom") {
-    const rsiCache = {}, bollCache = {};
+    const rsiCache = {}, bollCache = {}, macdCache = {};
     const h = {
       sma: (nn, i) => sma(closes, nn, i),
       rsi: (per) => rsiCache[per] || (rsiCache[per] = rsiArr(closes, per)),
       boll: (per, mult) => { const k = per + "_" + mult; return bollCache[k] || (bollCache[k] = bollArr(closes, per, mult)); },
+      macd: (f, s2, g) => { const k = f + "_" + s2 + "_" + g; return macdCache[k] || (macdCache[k] = macdArr(closes, f, s2, g)); },
     };
     let fn;
     try {
