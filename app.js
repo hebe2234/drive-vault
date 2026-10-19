@@ -50,6 +50,9 @@ function seedDB() {
       { id: "s2", name: "ETH RSI 均值回歸", market: "crypto", symbol: "ETHUSDT", template: "rsi_mr",
         params: { period: 14, oversold: 30, overbought: 70 }, stage: "idea", created: todayStr(),
         hyp: "情緒超賣超買後的均值回歸：散戶恐慌殺低後價格傾向反彈，RSI<30 買、>70 賣。" },
+      { id: "s3", name: "BTC Parabolic SAR", market: "crypto", symbol: "BTCUSDT", template: "sar",
+        params: { af0: 0.02, afStep: 0.02, afMax: 0.2 }, stage: "idea", created: todayStr(),
+        hyp: "趨勢跟隨：SAR 翻到價格下方代表趨勢轉多、翻到上方代表轉空。改編自 je-suis-tm/quant-trading 的 Parabolic SAR 策略；盤整區假訊號多，適合趨勢強的標的。" },
     ],
     paper: { cash: 100000, initial: 100000, positions: {}, log: [] },
   };
@@ -59,13 +62,18 @@ function saveDB() { localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
 let DB = loadDB(); saveDB();
 
 const STAGE_LABEL = { idea: "💡 點子", backtest: "📊 回測中", paper: "📝 Paper", live: "🚀 實盤", retired: "🗑 淘汰" };
-const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", bollinger: "布林通道", vix_fear: "VIX 恐懼貪婪", macd: "MACD 動量", custom: "自訂程式碼" };
+const TPL_LABEL = { ma_cross: "均線交叉", rsi_mr: "RSI 均值回歸", rsi_trend: "RSI 趨勢過濾", bollinger: "布林通道", vix_fear: "VIX 恐懼貪婪", macd: "MACD 動量", sar: "Parabolic SAR", awesome: "Awesome Oscillator", dual_thrust: "Dual Thrust", heikin: "Heikin-Ashi 趨勢", custom: "自訂程式碼" };
 const TPL_PARAMS = {
   ma_cross: [{ k: "fast", label: "快線", def: 10 }, { k: "slow", label: "慢線", def: 30 }],
   rsi_mr: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }],
+  rsi_trend: [{ k: "period", label: "RSI 週期", def: 14 }, { k: "oversold", label: "超賣線", def: 30 }, { k: "overbought", label: "超買線", def: 70 }, { k: "trend", label: "趨勢均線", def: 200 }],
   bollinger: [{ k: "period", label: "週期", def: 20 }, { k: "mult", label: "倍數", def: 2 }],
   vix_fear: [{ k: "lookback", label: "分位回看（天）", def: 252 }, { k: "buyPct", label: "買入分位（恐懼）", def: 0.9 }, { k: "sellPct", label: "賣出分位（安逸）", def: 0.2 }],
   macd: [{ k: "fast", label: "快 EMA", def: 12 }, { k: "slow", label: "慢 EMA", def: 26 }, { k: "sig", label: "訊號線", def: 9 }],
+  sar: [{ k: "af0", label: "初始加速因子", def: 0.02 }, { k: "afStep", label: "加速步長", def: 0.02 }, { k: "afMax", label: "加速上限", def: 0.2 }],
+  awesome: [{ k: "fast", label: "快線", def: 5 }, { k: "slow", label: "慢線", def: 34 }],
+  dual_thrust: [{ k: "n", label: "區間回看", def: 5 }, { k: "k1", label: "上軌係數", def: 0.5 }, { k: "k2", label: "下軌係數", def: 0.5 }],
+  heikin: [],
   custom: [],
 };
 const TPL_FORMULA = {
@@ -73,11 +81,18 @@ const TPL_FORMULA = {
   rsi_mr: p => `RSI(${p.period}) < ${p.oversold} → 買入；RSI(${p.period}) > ${p.overbought} → 賣出。賭情緒超賣超買後的均值回歸。`,
   bollinger: p => `收盤價跌破下軌（布林 ${p.period} 根、${p.mult}σ）→ 買入；漲破上軌 → 賣出。`,
   macd: p => `MACD(${p.fast},${p.slow}) 快線由下向上穿越訊號線(${p.sig}) → 買入（全倉）；由上向下跌破 → 賣出（全出）。經典動量交叉，以當根 K 棒收盤價成交。`,
+  rsi_trend: p => `趨勢過濾版 RSI：收盤價在 SMA(${p.trend}) 之上且 RSI(${p.period}) < ${p.oversold} → 買入；收盤價在 SMA(${p.trend}) 之下且 RSI > ${p.overbought} → 賣出。只在順勢方向撿超賣超買，減少盤整區假訊號。`,
+  sar: p => `Parabolic SAR(${p.af0},${p.afStep},${p.afMax}) 翻到價格下方（趨勢轉多）→ 買入；翻到價格上方（趨勢轉空）→ 賣出。趨勢跟隨，盤整區容易假訊號。`,
+  awesome: p => `Awesome Oscillator = SMA(${p.fast})－SMA(${p.slow})（中價）。AO 由負翻正 → 買入；由正翻負 → 賣出。動量翻轉訊號。`,
+  dual_thrust: p => `Dual Thrust 日線版：Range = 過去 ${p.n} 根 max(最高－最低收, 最高收－最低)；收盤 > 開盤＋${p.k1}×Range → 買入；收盤 < 開盤－${p.k2}×Range → 賣出。賭波動擴張後的方向延續。`,
+  heikin: () => `Heikin-Ashi 平均 K 線轉多（HA 收 > HA 開）→ 買入；轉空（HA 收 < HA 開）→ 賣出。平滑雜訊後的趨勢跟隨。`,
   vix_fear: p => `VIX 過去 ${p.lookback || 252} 天分位數 ≥ ${p.buyPct != null ? p.buyPct : 0.9}（極度恐懼）→ 全倉買入；≤ ${p.sellPct != null ? p.sellPct : 0.2}（極度安逸）→ 全出。別人恐懼我貪婪，賭 VIX 均值回歸。`,
 };
 const DEFAULT_CUSTOM_CODE =
-`// signal(i, closes, p) → 回傳 1=買入, -1=賣出, 0=無動作
-// 可用工具：sma(n,i)、rsi(period)[i]、boll(period,mult).up/.dn/.mid[i]
+`// signal(i, closes, p) → 回傳 1=買入, -1=賣出, 0=無動作（回傳 0~1 小數走分級倉位）
+// 可用工具：sma(n,i)、rsi(period)[i]、boll(period,mult).up/.dn/.mid[i]、
+// macd(f,s,g).dif/.dea[i]、sar(af0,afStep,afMax).trend[i]、heikin().o/.c[i]、
+// ao(fast,slow)[i]、ohlc.o/.h/.l/.c
 function signal(i, closes, p) {
   const f = sma(p.fast, i), s = sma(p.slow, i);
   const f0 = sma(p.fast, i - 1), s0 = sma(p.slow, i - 1);
@@ -260,6 +275,52 @@ function macdArr(closes, fast, slow, sigP) {
   return { dif, dea };
 }
 
+/* Parabolic SAR（Wilder 標準版）。回傳 { sar, trend }，trend: 1=多頭, -1=空頭 */
+function sarArr(o, h, l, c, af0, afStep, afMax) {
+  const n = c.length, sar = new Array(n).fill(null), trend = new Array(n).fill(0);
+  if (n < 2) return { sar, trend };
+  let up = c[1] >= c[0];
+  let ep = up ? h[1] : l[1], af = af0;
+  sar[1] = up ? l[0] : h[0]; trend[1] = up ? 1 : -1;
+  for (let i = 2; i < n; i++) {
+    let s = sar[i - 1] + af * (ep - sar[i - 1]);
+    if (up) {
+      s = Math.min(s, l[i - 1], l[i - 2]);
+      if (l[i] < s) { up = false; sar[i] = ep; trend[i] = -1; ep = l[i]; af = af0; continue; }
+      if (h[i] > ep) { ep = h[i]; af = Math.min(af + afStep, afMax); }
+    } else {
+      s = Math.max(s, h[i - 1], h[i - 2]);
+      if (h[i] > s) { up = true; sar[i] = ep; trend[i] = 1; ep = h[i]; af = af0; continue; }
+      if (l[i] < ep) { ep = l[i]; af = Math.min(af + afStep, afMax); }
+    }
+    sar[i] = s; trend[i] = up ? 1 : -1;
+  }
+  return { sar, trend };
+}
+
+/* Heikin-Ashi 平均 K 線。回傳 { o, c, h, l } 陣列 */
+function heikinArr(o, h, l, c) {
+  const n = c.length, ho = new Array(n), hc = new Array(n), hh = new Array(n), hl = new Array(n);
+  for (let i = 0; i < n; i++) {
+    hc[i] = (o[i] + h[i] + l[i] + c[i]) / 4;
+    ho[i] = i === 0 ? o[0] : (ho[i - 1] + hc[i - 1]) / 2;
+    hh[i] = Math.max(ho[i], hc[i], h[i]);
+    hl[i] = Math.min(ho[i], hc[i], l[i]);
+  }
+  return { o: ho, c: hc, h: hh, l: hl };
+}
+
+/* Awesome Oscillator = SMA(中價,fast) − SMA(中價,slow) */
+function aoArr(h, l, fast, slow) {
+  const n = h.length, out = new Array(n).fill(null);
+  const med = h.map((v, i) => (v + l[i]) / 2);
+  for (let i = 0; i < n; i++) {
+    const f = sma(med, fast, i), s = sma(med, slow, i);
+    if (f != null && s != null) out[i] = f - s;
+  }
+  return out;
+}
+
 /* 訊號：1=買, -1=賣, 0=無（訊號用當根收盤產生、當根收盤成交） */
 /* ---------- VIX 資料（FRED VIXCLS，每日；vix.csv 與網站同源，無 CORS 問題） ---------- */
 let _vixCache = null;
@@ -298,8 +359,9 @@ function alignVix(barTimes, interval, vd) {
 /* 訊號產生：回傳 { mode, sig, targets }
    discrete：舊式 -1/0/1（1=買、-1=賣、0=無動作）
    target：分級倉位，targets[i] 為 0~1 目標權重（null=維持不動） */
-function genSignals(closes, template, p, code, vix) {
+function genSignals(closes, template, p, code, vix, ohlc) {
   const n = closes.length, sig = new Array(n).fill(0);
+  const O = (ohlc && ohlc.o) || closes, H = (ohlc && ohlc.h) || closes, L = (ohlc && ohlc.l) || closes;
   if (template === "ma_cross") {
     const { fast, slow } = p;
     for (let i = 1; i < n; i++) {
@@ -346,23 +408,74 @@ function genSignals(closes, template, p, code, vix) {
       else if (dif[i - 1] >= dea[i - 1] && dif[i] < dea[i]) sig[i] = -1;
     }
     return { mode: "discrete", sig };
+  } else if (template === "rsi_trend") {
+    const r = rsiArr(closes, p.period);
+    for (let i = 0; i < n; i++) {
+      const t = sma(closes, p.trend, i);
+      if (r[i] == null || t == null) continue;
+      if (closes[i] > t && r[i] < p.oversold) sig[i] = 1;
+      else if (closes[i] < t && r[i] > p.overbought) sig[i] = -1;
+    }
+    return { mode: "discrete", sig };
+  } else if (template === "sar") {
+    const { trend } = sarArr(O, H, L, closes, p.af0 != null ? p.af0 : 0.02, p.afStep != null ? p.afStep : 0.02, p.afMax != null ? p.afMax : 0.2);
+    for (let i = 1; i < n; i++) {
+      if (!trend[i] || !trend[i - 1]) continue;
+      if (trend[i - 1] <= 0 && trend[i] > 0) sig[i] = 1;
+      else if (trend[i - 1] >= 0 && trend[i] < 0) sig[i] = -1;
+    }
+    return { mode: "discrete", sig };
+  } else if (template === "awesome") {
+    const ao = aoArr(H, L, p.fast, p.slow);
+    for (let i = 1; i < n; i++) {
+      if (ao[i] == null || ao[i - 1] == null) continue;
+      if (ao[i - 1] <= 0 && ao[i] > 0) sig[i] = 1;
+      else if (ao[i - 1] >= 0 && ao[i] < 0) sig[i] = -1;
+    }
+    return { mode: "discrete", sig };
+  } else if (template === "dual_thrust") {
+    const nn = Math.max(2, Math.round(p.n || 5)), k1 = p.k1 != null ? p.k1 : 0.5, k2 = p.k2 != null ? p.k2 : 0.5;
+    for (let i = nn; i < n; i++) {
+      let hh = -1e18, ll = 1e18, hc = -1e18, lc = 1e18;
+      for (let j = i - nn; j < i; j++) {
+        if (H[j] > hh) hh = H[j]; if (L[j] < ll) ll = L[j];
+        if (closes[j] > hc) hc = closes[j]; if (closes[j] < lc) lc = closes[j];
+      }
+      const range = Math.max(hh - lc, hc - ll);
+      if (closes[i] > O[i] + k1 * range) sig[i] = 1;
+      else if (closes[i] < O[i] - k2 * range) sig[i] = -1;
+    }
+    return { mode: "discrete", sig };
+  } else if (template === "heikin") {
+    const ha = heikinArr(O, H, L, closes);
+    for (let i = 1; i < n; i++) {
+      const bull = ha.c[i] > ha.o[i], pb = ha.c[i - 1] > ha.o[i - 1];
+      if (!pb && bull) sig[i] = 1;
+      else if (pb && !bull) sig[i] = -1;
+    }
+    return { mode: "discrete", sig };
   } else if (template === "custom") {
-    const rsiCache = {}, bollCache = {}, macdCache = {};
+    const rsiCache = {}, bollCache = {}, macdCache = {}, sarCache = {}, aoCache = {};
+    let _heikin = null;
     const h = {
       sma: (nn, i) => sma(closes, nn, i),
       rsi: (per) => rsiCache[per] || (rsiCache[per] = rsiArr(closes, per)),
       boll: (per, mult) => { const k = per + "_" + mult; return bollCache[k] || (bollCache[k] = bollArr(closes, per, mult)); },
       macd: (f, s2, g) => { const k = f + "_" + s2 + "_" + g; return macdCache[k] || (macdCache[k] = macdArr(closes, f, s2, g)); },
+      sar: (a0, aS, aM) => { const k = a0 + "_" + aS + "_" + aM; return sarCache[k] || (sarCache[k] = sarArr(O, H, L, closes, a0, aS, aM)); },
+      heikin: () => _heikin || (_heikin = heikinArr(O, H, L, closes)),
+      ao: (f, s2) => { const k = f + "_" + s2; return aoCache[k] || (aoCache[k] = aoArr(H, L, f, s2)); },
+      ohlc: { o: O, h: H, l: L, c: closes },
     };
     let fn;
     try {
-      fn = new Function("i", "closes", "p", "sma", "rsi", "boll", "vix",
-        (code || "") + "\n;return (typeof signal==='function') ? signal(i,closes,p,sma,rsi,boll,vix) : 0;");
+      fn = new Function("i", "closes", "p", "sma", "rsi", "boll", "vix", "ohlc", "sar", "heikin", "ao",
+        (code || "") + "\n;return (typeof signal==='function') ? signal(i,closes,p,sma,rsi,boll,vix,ohlc,sar,heikin,ao) : 0;");
     } catch (e) { throw new Error("自訂程式碼編譯失敗：" + e.message); }
     const raw = new Array(n);
     for (let i = 0; i < n; i++) {
       let v = 0;
-      try { v = fn(i, closes, p, h.sma, h.rsi, h.boll, vix); }
+      try { v = fn(i, closes, p, h.sma, h.rsi, h.boll, vix, h.ohlc, h.sar, h.heikin, h.ao); }
       catch (e) { throw new Error(`自訂程式碼在第 ${i} 根 K 棒出錯：` + e.message); }
       raw[i] = v;
     }
@@ -377,9 +490,9 @@ function genSignals(closes, template, p, code, vix) {
 /* 回測引擎：分級倉位 — 每根 K 棒朝目標權重（0~1）再平衡
    舊模板的 1/-1 視為 100%/0%，行為與舊版全倉進出完全一致 */
 const REBAL_TOL = 0.10; // 權重偏離超過 10% 才調倉，避免頻繁小額進出手續費大出血
-function runEngine(closes, template, params, feeRate, code, times, vix) {
+function runEngine(closes, template, params, feeRate, code, times, vix, ohlc) {
   const fee = feeRate / 100;
-  const { mode, sig, targets } = genSignals(closes, template, params, code, vix);
+  const { mode, sig, targets } = genSignals(closes, template, params, code, vix, ohlc);
   const tgt = mode === "target" ? targets : sig.map(s => s === 1 ? 1 : s === -1 ? 0 : null);
   let cash = 10000, pos = 0;
   const equity = [], trades = [], markers = [], rounds = [];
@@ -475,13 +588,14 @@ async function testConnection() {
 async function fetchBinance(symbol, interval, limit) {
   const k = await binanceFetch(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
   if (!Array.isArray(k) || !k.length) throw new Error("行情回傳格式異常，可能是交易對不存在");
-  return { closes: k.map(x => parseFloat(x[4])), times: k.map(x => x[0]) };
+  return { closes: k.map(x => parseFloat(x[4])), times: k.map(x => x[0]),
+           o: k.map(x => parseFloat(x[1])), h: k.map(x => parseFloat(x[2])), l: k.map(x => parseFloat(x[3])) };
 }
 /* 自訂日期區間：分頁抓取（每頁最多 1000 根），回傳 {closes, times} */
 async function fetchBinanceRange(symbol, interval, startMs, endMs) {
   const step = INTERVAL_MS[interval] || 3600000;
   const hardEnd = endMs || Date.now();
-  const closes = [], times = [];
+  const closes = [], times = [], oo = [], hh = [], ll = [];
   let cur = startMs, guard = 0;
   while (cur < hardEnd && guard++ < 8) {
     const k = await binanceFetch(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=1000&startTime=${cur}&endTime=${hardEnd}`);
@@ -491,28 +605,32 @@ async function fetchBinanceRange(symbol, interval, startMs, endMs) {
       if (t < cur) continue;
       if (t >= hardEnd) break;
       closes.push(parseFloat(x[4])); times.push(t);
+      oo.push(parseFloat(x[1])); hh.push(parseFloat(x[2])); ll.push(parseFloat(x[3]));
     }
     const lastT = k[k.length - 1][0];
     if (k.length < 1000 || lastT + step >= hardEnd) break;
     cur = lastT + step;
   }
   if (closes.length < 60) throw new Error("該區間資料太少（至少需要 60 根 K 棒），請放寬日期範圍");
-  return { closes, times };
+  return { closes, times, o: oo, h: hh, l: ll };
 }
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
-  const closes = [], times = [];
+  const closes = [], times = [], oo = [], hh = [], ll = [];
   for (const ln of lines) {
     const cells = ln.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
     const nums = cells.map(Number).filter(v => !isNaN(v));
     if (!nums.length) continue;
     if (/date/i.test(cells[0]) && isNaN(Number(cells[0]))) continue; // header
-    closes.push(nums[nums.length - 1]); // 取最後一個數字欄當收盤
+    let o, h, l, c;
+    if (nums.length >= 4) { o = nums[0]; h = nums[1]; l = nums[2]; c = nums[3]; }
+    else { c = nums[nums.length - 1]; o = h = l = c; } // 只有收盤欄時退化處理
+    closes.push(c); oo.push(o); hh.push(h); ll.push(l);
     const dt = Date.parse(cells[0]);
     times.push(isNaN(dt) ? null : dt); // 第一欄若是日期就留作時間
   }
   if (closes.length < 60) throw new Error("資料太少（至少需要 60 根 K 棒）");
-  return { closes, times };
+  return { closes, times, o: oo, h: hh, l: ll };
 }
 let lastResult = null;
 async function runBacktest() {
@@ -520,7 +638,8 @@ async function runBacktest() {
   if (!s) { alert("請先在策略區建立策略"); return; }
   $("bRun").disabled = true; $("bStatus").textContent = "資料載入中…"; $("bResult").classList.add("hidden");
   try {
-    let closes, times = null;
+    let closes, times = null, D = null;
+    const NEED_OHLC = ["sar", "awesome", "dual_thrust", "heikin"];
     if ($("bSrc").value === "binance") {
       const sym = $("bSymbol").value.trim().toUpperCase() || s.symbol;
       const iv = $("bInterval").value;
@@ -528,31 +647,33 @@ async function runBacktest() {
       const eMs = $("bEnd").value ? new Date($("bEnd").value + "T23:59:59").getTime() : null;
       if (sMs && eMs && eMs < sMs) throw new Error("結束日期不可早於開始日期");
       if (sMs) {
-        const d = await fetchBinanceRange(sym, iv, sMs, eMs);
-        closes = d.closes; times = d.times;
+        D = await fetchBinanceRange(sym, iv, sMs, eMs);
       } else {
-        const d = await fetchBinance(sym, iv, 1000);
-        closes = d.closes; times = d.times;
+        D = await fetchBinance(sym, iv, 1000);
       }
+      closes = D.closes; times = D.times;
     } else {
       const f = $("bCsv").files[0];
       if (!f) throw new Error("請先選擇 CSV 檔");
-      const d = parseCSV(await f.text());
-      closes = d.closes; times = d.times;
+      D = parseCSV(await f.text());
+      closes = D.closes; times = D.times;
     }
+    const ohlc = { o: D.o, h: D.h, l: D.l };
+    const degraded = NEED_OHLC.includes(s.template) && D.o.every((v, i) => v === closes[i]);
     let vix = null;
     if (s.template === "vix_fear" || (s.template === "custom" && /vix/i.test(s.code || ""))) {
       const vd = await loadVixData();
       vix = alignVix(times, $("bSrc").value === "binance" ? $("bInterval").value : "1d", vd);
     }
-    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "", times, vix);
+    const r = runEngine(closes, s.template, s.params, parseFloat($("bFee").value) || 0, s.code || "", times, vix, ohlc);
     lastResult = { r, symbol: $("bSymbol").value.trim().toUpperCase() || s.symbol, name: s.name, times };
     s.lastBacktest = { date: todayStr(), totalRet: r.totalRet, sharpe: r.sharpe, maxDD: r.maxDD,
                        winRate: r.winRate, nTrades: r.nTrades };
     saveDB(); renderStrategies();
     renderBacktestResult(lastResult);
     const rangeTxt = (times && times[0] != null) ? `（${fmtT(times[0])}～${fmtT(times[times.length - 1])}）` : "";
-    $("bStatus").textContent = `完成：${closes.length} 根 K 棒${rangeTxt}，${r.nTrades} 筆交易。`;
+    const degTxt = degraded ? " ⚠️ CSV 只有收盤價、無 OHLC，此模板結果僅供參考，請用 Binance 資料重跑。" : "";
+    $("bStatus").textContent = `完成：${closes.length} 根 K 棒${rangeTxt}，${r.nTrades} 筆交易。${degTxt}`;
   } catch (e) { $("bStatus").textContent = "❌ " + e.message; }
   $("bRun").disabled = false;
 }
@@ -734,12 +855,13 @@ async function runnerTick() {
   try {
     const klines = await binanceFetch(`/api/v3/klines?symbol=${s.symbol}&interval=1m&limit=120`);
     const closes = klines.map(k => parseFloat(k[4]));
+    const ohlc = { o: klines.map(k => parseFloat(k[1])), h: klines.map(k => parseFloat(k[2])), l: klines.map(k => parseFloat(k[3])) };
     let vix = null;
     if (s.template === "vix_fear" || (s.template === "custom" && /vix/i.test(s.code || ""))) {
       try { vix = alignVix(klines.map(k => k[0]), "1m", await loadVixData()); }
       catch (e) { paperLog("[自動] VIX 資料載入失敗，跳過本次"); return; }
     }
-    const { mode, sig, targets } = genSignals(closes, s.template, s.params, s.code || "", vix);
+    const { mode, sig, targets } = genSignals(closes, s.template, s.params, s.code || "", vix, ohlc);
     const px = closes[closes.length - 1];
     const pos = DB.paper.positions[s.symbol];
     const { equity } = paperEquity({ [s.symbol]: px });
