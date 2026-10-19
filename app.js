@@ -33,10 +33,11 @@ function lock() {
 }
 function showTab(name) {
   document.querySelectorAll(".tabbtn[data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
-  ["strat", "backtest", "paper", "live"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== name));
+  ["strat", "backtest", "paper", "live", "gallery"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== name));
   if (name === "paper") refreshPaper();
   if (name === "live") renderLive();
   if (name === "backtest") refreshBacktestStratSelect();
+  if (name === "gallery") renderGallery();
 }
 
 /* ---------- 資料存取 ---------- */
@@ -946,6 +947,118 @@ function killAll() {
   if (!syms.length) { alert("目前沒有虛擬持倉"); return; }
   if (!confirm(`確定平掉全部 ${syms.length} 個虛擬持倉？`)) return;
   (async () => { for (const s of syms) await paperFlatten(s); paperLog("⛔ 緊急全部平倉已執行"); })();
+}
+
+/* ---------- 策略圖鑑 ---------- */
+const TPL_INFO = {
+  ma_cross:    { tag: "趨勢跟隨", desc: "雙均線交叉捕捉趨勢方向，短線站上長線買入、跌破賣出。", suits: "趨勢明確的牛熊市", warn: "盤整區連續假突破（whipsaw），ALPHA-003 就是死在這" },
+  rsi_mr:      { tag: "均值回歸", desc: "RSI 超賣買入、超買賣出，賭散戶情緒反轉。", suits: "震盪盤整市", warn: "單邊趨勢中會逆勢接刀，越跌越買" },
+  rsi_trend:   { tag: "均值回歸＋過濾", desc: "只在均線之上撿超賣、均線之下撿超買，順勢做回歸。", suits: "帶趨勢的震盪市", warn: "趨勢反轉點會慢半拍，過濾條件太嚴會沒訊號" },
+  bollinger:   { tag: "均值回歸", desc: "跌破布林下軌買入、漲破上軌賣出，賭價格回到中線。", suits: "震盪市", warn: "趨勢市會一路逆勢加碼，虧損無上限感" },
+  vix_fear:    { tag: "情緒擇時", desc: "VIX 極度恐懼（高分位）買入、極度安逸（低分位）賣出。", suits: "恐慌殺盤後的反彈段", warn: "需要 VIX 資料；訊號稀少，一年可能只有幾次" },
+  macd:        { tag: "趨勢跟隨", desc: "MACD 快線（DIF）穿越訊號線（DEA），經典動量交叉。", suits: "趨勢市", warn: "落後指標，轉折處反應慢半拍" },
+  sar:         { tag: "趨勢跟隨", desc: "Parabolic SAR 反轉點追蹤趨勢，SAR 翻到價格下方轉多。", suits: "強趨勢市", warn: "盤整區假訊號多，加速因子越大越敏感" },
+  awesome:     { tag: "動量", desc: "Awesome Oscillator（快慢中價均線差）零軸翻轉抓動量轉向。", suits: "趨勢起漲／起跌的轉折點", warn: "雜訊多，零軸附近反覆翻轉常見" },
+  dual_thrust: { tag: "波動突破", desc: "開盤價 ± k×近期區間，收盤突破上軌買入、跌破下軌賣出。", suits: "高波動、事件驅動行情", warn: "k 係數敏感；低波動盤整期頻繁空轉" },
+  heikin:      { tag: "趨勢跟隨", desc: "Heikin-Ashi 平均 K 線平滑雜訊，轉多買入、轉空賣出。", suits: "趨勢市", warn: "出場較慢，趨勢末端回吐較多" },
+  custom:      { tag: "自由發揮", desc: "自己寫 signal()，sar/heikin/ao/ohlc 等 helper 全開放。", suits: "什麼盤勢都能刻，物理腦專用", warn: "寫錯不會報錯只會賠錢，先回測再 paper" },
+};
+const TPL_ORDER = ["ma_cross", "rsi_mr", "rsi_trend", "bollinger", "macd", "sar", "awesome", "dual_thrust", "heikin", "vix_fear", "custom"];
+
+/* 圖鑑用合成 OHLC：前段趨勢、中段盤整、後段反轉，讓各類策略都有戲 */
+function galleryData() {
+  let s = 1234567;
+  const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const n = 320, o = [], h = [], l = [], c = [];
+  let px = 100;
+  for (let i = 0; i < n; i++) {
+    const ph = i / n;
+    const drift = ph < 0.35 ? 0.45 : ph < 0.65 ? 0.02 : -0.3;
+    const chg = drift + (rnd() - 0.5) * 2.6 + Math.sin(i / 16) * 1.1;
+    const oo = px, cc = px + chg;
+    o.push(oo); c.push(cc);
+    h.push(Math.max(oo, cc) + rnd() * 1.0);
+    l.push(Math.min(oo, cc) - rnd() * 1.0);
+    px = cc;
+  }
+  return { o, h, l, c };
+}
+function galleryVix(n) {
+  let s = 7654321;
+  const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const v = []; let x = 20;
+  for (let i = 0; i < n; i++) { x += (20 - x) * 0.05 + (rnd() - 0.5) * 6; v.push(Math.max(9, x)); }
+  return v;
+}
+function drawGalleryChart(cv, closes, sig) {
+  const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const min = Math.min(...closes), max = Math.max(...closes), rg = (max - min) || 1;
+  const X = i => (i / (closes.length - 1)) * (W - 10) + 5;
+  const Y = v => H - 10 - ((v - min) / rg) * (H - 30);
+  ctx.strokeStyle = "#8b96ad"; ctx.lineWidth = 1.5; ctx.beginPath();
+  closes.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
+  ctx.stroke(); ctx.lineWidth = 1;
+  sig.forEach((sv, i) => {
+    if (sv === 1) {
+      ctx.fillStyle = "#3ddc84"; ctx.beginPath();
+      ctx.moveTo(X(i), Y(closes[i]) - 15); ctx.lineTo(X(i) - 5, Y(closes[i]) - 6); ctx.lineTo(X(i) + 5, Y(closes[i]) - 6); ctx.fill();
+    } else if (sv === -1) {
+      ctx.fillStyle = "#ff7a7a"; ctx.beginPath();
+      ctx.moveTo(X(i), Y(closes[i]) + 15); ctx.lineTo(X(i) - 5, Y(closes[i]) + 6); ctx.lineTo(X(i) + 5, Y(closes[i]) + 6); ctx.fill();
+    }
+  });
+}
+let _galleryDone = false;
+function renderGallery() {
+  if (_galleryDone) return; _galleryDone = true;
+  const g = $("galleryGrid"); g.innerHTML = "";
+  const d = galleryData(), ohlc = { o: d.o, h: d.h, l: d.l };
+  const gvix = galleryVix(d.c.length);
+  TPL_ORDER.forEach(tpl => {
+    const info = TPL_INFO[tpl], label = TPL_LABEL[tpl];
+    const params = {};
+    (TPL_PARAMS[tpl] || []).forEach(p => params[p.k] = p.def);
+    if (tpl === "custom") Object.assign(params, { fast: 10, slow: 30 }); // 圖鑑用預設範例的參數
+    let res;
+    try {
+      const vix = tpl === "vix_fear" ? gvix : null;
+      const code = tpl === "custom" ? DEFAULT_CUSTOM_CODE : "";
+      res = genSignals(d.c, tpl, params, code, vix, ohlc);
+    } catch (e) { res = { mode: "discrete", sig: new Array(d.c.length).fill(0) }; }
+    let sig = res.sig;
+    if (res.mode === "target") { // 分級模式轉成標記
+      sig = new Array(d.c.length).fill(0); let prev = 0;
+      res.targets.forEach((t, i) => {
+        if (t == null) return;
+        if (prev <= 0.05 && t > 0.05) sig[i] = 1; else if (prev > 0.05 && t <= 0.05) sig[i] = -1;
+        prev = t;
+      });
+    }
+    const nb = sig.filter(s => s === 1).length, ns = sig.filter(s => s === -1).length;
+    const card = document.createElement("div"); card.className = "strat";
+    card.innerHTML = `
+      <span class="stage stage-backtest">${esc(info.tag)}</span>
+      <h3>${esc(label)}</h3>
+      <canvas width="560" height="170" style="width:100%;height:auto;background:#0d1320;border:1px solid var(--line);border-radius:8px"></canvas>
+      <div class="hyp" style="margin-top:8px">${esc(info.desc)}</div>
+      <div class="meta">訊號：${tpl === "custom" ? "自訂 signal() 函式（下圖為預設範例：雙均線邏輯）" : esc((TPL_FORMULA[tpl] || (() => ""))(params))}</div>
+      <div class="meta">適合：${esc(info.suits)}</div>
+      <div class="meta">注意：${esc(info.warn)}</div>
+      <div class="meta">示範圖產生 ${nb} 買 / ${ns} 賣訊號</div>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn sm" onclick="galleryNewStrategy('${tpl}')">用這個模板開策略 →</button>
+      </div>`;
+    g.appendChild(card);
+    try { drawGalleryChart(card.querySelector("canvas"), d.c, sig); } catch (e) { /* 畫圖失敗不擋卡片 */ }
+  });
+}
+function galleryNewStrategy(tpl) {
+  showTab("strat");
+  resetStrategyForm();
+  $("sTemplate").value = tpl;
+  renderParamInputs();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 /* ---------- 初始化 ---------- */
