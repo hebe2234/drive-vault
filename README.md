@@ -9,7 +9,7 @@
 ### 🧪 策略區
 策略庫的新增 / 編輯 / 刪除，每個策略記錄：市場、交易對、訊號模板、參數、**假說**（寫不出經濟邏輯就不該回測）、階段（點子 → 回測中 → Paper → 實盤 → 淘汰）。資料存在瀏覽器 localStorage。
 - **查看策略詳情**：每張卡可展開看完整訊號邏輯、參數、上次回測成績
-- **✏️ 自訂程式碼**：模板選「自訂程式碼」，自己寫 `function signal(i, closes, p)`（回傳 1=買、-1=賣、0=無），可用 `sma(n,i)`、`rsi(period)[i]`、`boll(period,mult).up/.dn[i]`，參數用 JSON 自定。回測和 paper 自動跑都支援自訂策略。
+- **✏️ 自訂程式碼**：模板選「自訂程式碼」，自己寫 `function signal(i, closes, p)`（回傳 1=買、-1=賣、0=無；回傳 0~1 小數走分級倉位）。可用 `sma(n,i)`、`rsi(period)[i]`、`boll(period,mult).up/.dn/.mid[i]`、`macd(f,s,g).dif/.dea[i]`、`sar(af0,afStep,afMax).trend[i]`、`heikin().o/.c[i]`、`ao(fast,slow)[i]`、`ohlc.o/.h/.l/.c`，參數用 JSON 自定。回測和 paper 自動跑都支援自訂策略。
 
 ![策略區](screenshots/04-strategy.png)
 
@@ -17,7 +17,8 @@
 - 資料：Binance 免費 K 線（免 API key）或上傳自己的 CSV（`date,open,high,low,close`）
 - 日期區間：Binance 來源可自訂開始/結束日期（留空＝最近 1000 根）；CSV 用檔案自帶區間
 - 引擎：純前端向量化回測，做多分級倉位（目標權重 0~1，偏離 >5% 才調倉），手續費可調；舊模板的 1/-1 視為 100%/0%
-- 訊號模板：均線交叉 / RSI 均值回歸 / 布林通道 / VIX 恐懼貪婪（全倉進出）/ 自訂程式碼（回傳小數走分級模式）
+- 訊號模板：均線交叉 / RSI 均值回歸 / RSI 趨勢過濾 / 布林通道 / MACD 動量 / Parabolic SAR / Awesome Oscillator / Dual Thrust / Heikin-Ashi 趨勢 / VIX 恐懼貪婪 / 自訂程式碼（回傳小數走分級模式）
+  - 新增模板改編自 [je-suis-tm/quant-trading](https://github.com/je-suis-tm/quant-trading)（11k⭐ 的開源量化策略庫）：Parabolic SAR、Awesome Oscillator、Dual Thrust（日線版）、Heikin-Ashi；另加 RSI 趨勢過濾（只在順勢方向撿超賣超買，減少盤整假訊號）
 - 輸出：總報酬、年化報酬、年化 Sharpe、最大回撤、勝率、Profit Factor、大盤基準線（同一標的買入持有）＋超額年化、權益曲線圖、交易明細（含每筆買賣時間）
 
 ### 📝 Paper Trading
