@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quant Lab｜量化工作台</title>
-<link rel="stylesheet" href="styles.css?v=120">
+<link rel="stylesheet" href="styles.css?v=121">
 </head>
 <body>
 
@@ -46,9 +46,14 @@
           <div class="field"><label>訊號模板</label><select id="sTemplate" onchange="renderParamInputs()">
             <option value="ma_cross">均線交叉</option>
             <option value="rsi_mr">RSI 均值回歸</option>
+            <option value="rsi_trend">RSI 趨勢過濾</option>
             <option value="bollinger">布林通道</option>
             <option value="vix_fear">VIX 恐懼貪婪</option>
             <option value="macd">MACD 動量</option>
+            <option value="sar">Parabolic SAR</option>
+            <option value="awesome">Awesome Oscillator</option>
+            <option value="dual_thrust">Dual Thrust</option>
+            <option value="heikin">Heikin-Ashi 趨勢</option>
             <option value="custom">✏️ 自訂程式碼</option>
           </select></div>
           <div class="field"><label>階段</label><select id="sStage">
@@ -68,7 +73,12 @@
           <span style="font-family:monospace">p</span> 是上面的參數。可用
           <span style="font-family:monospace">sma(n,i)</span>、
           <span style="font-family:monospace">rsi(period)[i]</span>、
-          <span style="font-family:monospace">boll(period,mult).up / .dn / .mid[i]</span>。
+          <span style="font-family:monospace">boll(period,mult).up / .dn / .mid[i]</span>、
+          <span style="font-family:monospace">macd(f,s,g).dif / .dea[i]</span>、
+          <span style="font-family:monospace">sar(af0,afStep,afMax).trend[i]</span>、
+          <span style="font-family:monospace">heikin().o/.c[i]</span>、
+          <span style="font-family:monospace">ao(fast,slow)[i]</span>、
+          <span style="font-family:monospace">ohlc.o / .h / .l / .c</span>（原始 K 線）。
           回傳 <span style="font-family:monospace">1</span>=買、<span style="font-family:monospace">-1</span>=賣、
           <span style="font-family:monospace">0</span>=無動作。想用分級倉位：回傳 <span style="font-family:monospace">0~1</span>
           的小數當目標權重（例如 <span style="font-family:monospace">0.7</span>=70% 倉位；只要出現過
@@ -209,6 +219,6 @@
   </div>
 </div>
 
-<script src="app.js?v=120"></script>
+<script src="app.js?v=121"></script>
 </body>
 </html>
