@@ -28,6 +28,7 @@
     <button class="tabbtn" data-tab="backtest" onclick="showTab('backtest')">📊 回測</button>
     <button class="tabbtn" data-tab="paper" onclick="showTab('paper')">📝 Paper Trading</button>
     <button class="tabbtn" data-tab="live" onclick="showTab('live')">🚀 正式上線</button>
+    <button class="tabbtn" data-tab="gallery" onclick="showTab('gallery')">🖼️ 策略圖鑑</button>
     <span class="spacer"></span>
     <button class="tabbtn" onclick="lock()">🔒 鎖定</button>
   </div>
@@ -216,9 +217,18 @@
       </div>
     </div>
 
+    <!-- ===== 策略圖鑑 ===== -->
+    <div id="tab-gallery" class="hidden">
+      <div class="card">
+        <h2>🖼️ 策略圖鑑</h2>
+        <p class="mut">每個模板一張圖卡：同一段示範走勢（前半趨勢、後半震盪，均為合成資料）跑出來的買賣訊號，方便直觀比較。圖卡下方有邏輯、適合盤勢與注意事項；看中哪個就按「用這個模板開策略」。SAR / Awesome / Dual Thrust / Heikin-Ashi 改編自 <span style="font-family:monospace">je-suis-tm/quant-trading</span>。</p>
+        <div class="strat-grid" id="galleryGrid" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))"></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
-<script src="app.js?v=121"></script>
+<script src="app.js?v=122"></script>
 </body>
 </html>
