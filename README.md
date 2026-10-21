@@ -2,7 +2,7 @@
 
 一個「輸入密碼才看得到」的量化交易 GUI，四個階段：**策略區 → 回測 → Paper Trading → 正式上線**。
 
-🌐 線上網站：https://hebe2234.github.io/drive-vault/（密碼門後方）
+🌐 線上網站：https://hebe2234.github.io/drive-vault/
 
 ## 功能
 
